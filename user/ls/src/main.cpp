@@ -1,5 +1,5 @@
 
-/** StACSOS - ls utilitu
+/** StACSOS - ls utility
  * 
  * Loell Jean Barit <ljb39@st-andrews.ac.uk>
  */
