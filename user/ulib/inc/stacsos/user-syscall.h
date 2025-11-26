@@ -8,6 +8,7 @@
 #pragma once
 
 #include <stacsos/syscalls.h>
+#include <stacsos/dirent.h>
 
 namespace stacsos {
 struct rw_result {

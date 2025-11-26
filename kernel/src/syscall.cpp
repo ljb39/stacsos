@@ -51,83 +51,93 @@ static syscall_result do_open(process &owner, const char *path)
  */
 static syscall_result do_readdir(dirlist_request* request, dirlist_result* result)
 {
-	// Validate pointers
-	if (!request || !result || !request->path || !request->buffer) {
-		return syscall_result { syscall_result_code::not_found, 0 };
-	}
-	
-	// Lookup the path through VFS
-	auto node = vfs::get().lookup(request->path);
-	
-	if (!node) {
-		dprintf("do_readdir: path not found: %s\n", request->path);
-		return syscall_result { syscall_result_code::not_found, 0 };
-	}
-	
-	// Check if it's a directory
-	if (node->kind() != fs_node_kind::directory) {
-		dprintf("do_readdir: not a directory: %s\n", request->path);
-		return syscall_result { syscall_result_code::not_supported, 0 };
-	}
-	
-	// Cast to fat_node to access children
-	fat_node* dir = dynamic_cast<fat_node*>(node);
-	
-	if (!dir) {
-		dprintf("do_readdir: failed to cast to fat_node\n");
-		return syscall_result { syscall_result_code::not_supported, 0 };
-	}
-	
-	// Initialize result
-	result->entries_read = 0;
-	result->has_more = false;
-	
-	// Iterate through children
-	size_t index = 0;
-	const auto& children = dir->children();
-	
-	for (auto child : children) {
-		if (index >= request->buffer_count) {
-			result->has_more = true;
-			break;
-		}
-		
-		// Build directory entry
-		dirent entry;
-		
-		// Copy name safely
-		const string& child_name = child->name();
-		size_t name_len = child_name.length();
-		if (name_len >= MAX_FILENAME_LEN) {
-			name_len = MAX_FILENAME_LEN - 1;
-		}
-		
-		// Copy string character by character
-		for (size_t i = 0; i < name_len; i++) {
-			entry.name[i] = child_name[i];
-		}
-		entry.name[name_len] = '\0';
-		
-		// Set type
-		entry.type = (child->kind() == fs_node_kind::file) ? 
-		             dirent_type::DT_FILE : 
-		             dirent_type::DT_DIR;
-		
-		// Set size (only for files)
-		entry.size = (entry.type == dirent_type::DT_FILE) ? 
-		             child->size() : 0;
-		
-		// Copy to userspace buffer
-		request->buffer[index] = entry;
-		
-		index++;
-	}
-	
-	result->entries_read = index;
-	
-	dprintf("do_readdir: returning %lu entries for %s\n", index, request->path);
-	
-	return syscall_result { syscall_result_code::ok, index };
+    // Validate pointers
+    if (!request || !result || !request->path || !request->buffer) {
+        return syscall_result { syscall_result_code::not_found, 0 };
+    }
+    
+    // Lookup the path through VFS
+    auto node = vfs::get().lookup(request->path);
+    
+    if (!node) {
+        dprintf("do_readdir: path not found: %s\n", request->path);
+        return syscall_result { syscall_result_code::not_found, 0 };
+    }
+    
+    // Check if it's a directory
+    if (node->kind() != fs_node_kind::directory) {
+        dprintf("do_readdir: not a directory: %s\n", request->path);
+        return syscall_result { syscall_result_code::not_supported, 0 };
+    }
+    
+    // Cast to fat_node to access children
+    fat_node* dir = static_cast<fat_node*>(node);
+    
+    if (!dir) {
+        dprintf("do_readdir: failed to cast to fat_node\n");
+        return syscall_result { syscall_result_code::not_supported, 0 };
+    }
+    
+    // Initialize result
+    result->entries_read = 0;
+    result->has_more = false;
+    
+    // Iterate through children
+    size_t index = 0;
+    const auto& children = dir->children();
+    
+    for (auto child : children) {
+        if (index >= request->buffer_count) {
+            result->has_more = true;
+            break;
+        }
+        
+        // Build directory entry
+        dirent entry;
+        
+        // Copy name safely
+        const string& child_name = child->name();
+        size_t name_len = child_name.length();
+        if (name_len >= MAX_FILENAME_LEN) {
+            name_len = MAX_FILENAME_LEN - 1;
+        }
+        
+        for (size_t i = 0; i < name_len; i++) {
+            entry.name[i] = child_name[i];
+        }
+        entry.name[name_len] = '\0';
+
+        // Fill remaining characters with null for safety
+        for (size_t i = name_len + 1; i < MAX_FILENAME_LEN; i++) {
+            entry.name[i] = '\0';
+        }
+        
+        // Set type
+        entry.type = (child->kind() == fs_node_kind::file) ? 
+                     dirent_type::DT_FILE : 
+                     dirent_type::DT_DIR;
+        
+        // Set size (only for files)
+        entry.size = (entry.type == dirent_type::DT_FILE) ?
+                     child->size() : 0;
+
+        dirent* dest = &request->buffer[index];
+
+        // Copy name
+        for (size_t i = 0; i < MAX_FILENAME_LEN; i++) {
+            dest->name[i] = entry.name[i];
+        }
+
+        // Copy simple fields
+        dest->type = entry.type;
+        dest->size = entry.size;
+
+        index++;
+    }
+    
+    result->entries_read = index;
+    
+    return syscall_result { syscall_result_code::ok, index };
 }
 
 static syscall_result operation_result_to_syscall_result(operation_result &&o)
