@@ -107,6 +107,13 @@ int main(const char *cmdline)
 
     //Print directory contents
     for (size_t i = 0; i < result.entries_read; i++) {
+
+        // Skip special FAT entries
+        if (memops::strcmp(entries[i].name, ".") == 0 ||
+            memops::strcmp(entries[i].name, "..") == 0) {
+            continue;
+        }
+
         if (long_format) {
             //Long format: show type and size
             char type = (entries[i].type == dirent_type::DT_FILE) ? 'F' : 'D';
