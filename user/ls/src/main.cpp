@@ -4,10 +4,10 @@
  * Loell Jean Barit <ljb39@st-andrews.ac.uk>
  */
 
-#include <stacsos/console.h>
 #include <stacsos/memops.h>
 #include <stacsos/user-syscall.h>
 #include <stacsos/dirent.h>
+#include <stacsos/console.h>
 
 using namespace stacsos;
 
@@ -19,12 +19,12 @@ static void sort_entries(dirent* entries, size_t count)
     for (size_t i = 0; i < count; i++) {
         for (size_t j = i + 1; j < count; j++) {
 
-            // Case-insensitive alphabetical compare via memops::strcmp
             if (memops::strcmp(entries[i].name, entries[j].name) > 0) {
                 // Swap
-                dirent temp = entries[i];
-                entries[i] = entries[j];
-                entries[j] = temp;
+                dirent temp;
+                memops::memcpy(&temp, &entries[i], sizeof(dirent));
+                memops::memcpy(&entries[i], &entries[j], sizeof(dirent));
+                memops::memcpy(&entries[j], &temp, sizeof(dirent));
             }
         }
     }
@@ -32,6 +32,8 @@ static void sort_entries(dirent* entries, size_t count)
 
 int main(const char *cmdline)
 {
+    console::get().write("\e\x0e");
+
     auto& con = console::get();
 
     bool long_format = false;

@@ -19,6 +19,7 @@
 #include <stacsos/kernel/sched/thread.h>
 #include <stacsos/syscalls.h>
 #include <stacsos/dirent.h> 
+#include <stacsos/memops.h>
 
 using namespace stacsos;
 using namespace stacsos::kernel;
@@ -27,24 +28,6 @@ using namespace stacsos::kernel::obj;
 using namespace stacsos::kernel::fs;
 using namespace stacsos::kernel::mem;
 using namespace stacsos::kernel::arch::x86;
-
-static void copy_name(char dest[MAX_FILENAME_LEN], const string& src)
-{
-    size_t len = src.length();
-    if (len >= MAX_FILENAME_LEN)
-        len = MAX_FILENAME_LEN - 1;
-
-    // Copy characters
-    for (size_t i = 0; i < len; i++)
-        dest[i] = src[i];
-
-    // Null terminate
-    dest[len] = '\0';
-
-    // Zero-pad remaining space (avoids leaking stack)
-    for (size_t i = len + 1; i < MAX_FILENAME_LEN; i++)
-        dest[i] = '\0';
-}
 
 
 static syscall_result do_open(process &owner, const char *path)
@@ -123,8 +106,13 @@ static syscall_result do_readdir(dirlist_request* request, dirlist_result* resul
         // Get destination entry
         dirent* dest = &request->buffer[index];
 
-        // Copy name
-        copy_name(dest->name, child->name());
+        size_t name_len = child->name().length();
+        if (name_len >= MAX_FILENAME_LEN)
+            name_len = MAX_FILENAME_LEN - 1;
+
+        // Copy the name into the destination buffer (null-terminated)
+        memops::memcpy(dest->name, child->name().c_str(), name_len);
+        dest->name[name_len] = '\0';  // Ensure null-termination
 
         // Set type
         dest->type = (child->kind() == fs_node_kind::file)
@@ -136,6 +124,11 @@ static syscall_result do_readdir(dirlist_request* request, dirlist_result* resul
                         ? child->size()
                         : 0;
 
+        // Zero pad the rest of the name buffer if necessary
+        for (size_t i = name_len + 1; i < MAX_FILENAME_LEN; i++) {
+            dest->name[i] = '\0';
+        }
+
         index++;
     }
 
@@ -146,6 +139,7 @@ static syscall_result do_readdir(dirlist_request* request, dirlist_result* resul
 
     return { syscall_result_code::ok, index };
 }
+
 
 
 static syscall_result operation_result_to_syscall_result(operation_result &&o)
