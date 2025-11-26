@@ -72,77 +72,81 @@ static syscall_result do_readdir(dirlist_request* request, dirlist_result* resul
 {
     // Validate pointers
     if (!request || !result || !request->path || !request->buffer) {
-        return syscall_result { syscall_result_code::not_found, 0 };
+        return { syscall_result_code::not_supported, 0 };
     }
-    
+
+    // Validate buffer count
+    if (request->buffer_count == 0 || request->buffer_count > 1024) {
+        dprintf("do_readdir: invalid buffer_count=%lu\n", request->buffer_count);
+        return { syscall_result_code::not_supported, 0 };
+    }
+
+    dprintf("do_readdir: path='%s', buffer_count=%lu\n",
+            request->path, request->buffer_count);
+
     // Lookup the path through VFS
     auto node = vfs::get().lookup(request->path);
     
     if (!node) {
         dprintf("do_readdir: path not found: %s\n", request->path);
-        return syscall_result { syscall_result_code::not_found, 0 };
+        return { syscall_result_code::not_found, 0 };
     }
-    
-    // Check if it's a directory
+
+    // Ensure this is a directory
     if (node->kind() != fs_node_kind::directory) {
         dprintf("do_readdir: not a directory: %s\n", request->path);
-        return syscall_result { syscall_result_code::not_supported, 0 };
+        return { syscall_result_code::not_supported, 0 };
     }
-    
-    // Cast to fat_node to access children
+
+    // StACSOS only uses FAT, so static_cast is safe.
     fat_node* dir = static_cast<fat_node*>(node);
-    
-    if (!dir) {
-        dprintf("do_readdir: failed to cast to fat_node\n");
-        return syscall_result { syscall_result_code::not_supported, 0 };
-    }
-    
-    // Initialize result
+
+    // Initialize result structure
     result->entries_read = 0;
     result->has_more = false;
-    
-    // Iterate through children
+
     size_t index = 0;
     const auto& children = dir->children();
-    
+
     for (auto child : children) {
+
+        // Skip FAT special entries
+        if (child->name() == "." || child->name() == "..") {
+            continue;
+        }
+
         if (index >= request->buffer_count) {
             result->has_more = true;
             break;
         }
-        
-        // Build directory entry
-        dirent entry;
-        
-        copy_name(entry.name, child->name());
-        
-        // Set type
-        entry.type = (child->kind() == fs_node_kind::file) ? 
-                     dirent_type::DT_FILE : 
-                     dirent_type::DT_DIR;
-        
-        // Set size (only for files)
-        entry.size = (entry.type == dirent_type::DT_FILE) ?
-                     child->size() : 0;
 
+        // Get destination entry
         dirent* dest = &request->buffer[index];
 
         // Copy name
-        for (size_t i = 0; i < MAX_FILENAME_LEN; i++) {
-            dest->name[i] = entry.name[i];
-        }
+        copy_name(dest->name, child->name());
 
-        // Copy simple fields
-        dest->type = entry.type;
-        dest->size = entry.size;
+        // Set type
+        dest->type = (child->kind() == fs_node_kind::file)
+                        ? dirent_type::DT_FILE
+                        : dirent_type::DT_DIR;
+
+        // Set size for files only
+        dest->size = (dest->type == dirent_type::DT_FILE)
+                        ? child->size()
+                        : 0;
 
         index++;
     }
-    
+
     result->entries_read = index;
-    
-    return syscall_result { syscall_result_code::ok, index };
+
+    dprintf("do_readdir: returned %lu entries%s\n",
+            index, result->has_more ? " (has_more)" : "");
+
+    return { syscall_result_code::ok, index };
 }
+
 
 static syscall_result operation_result_to_syscall_result(operation_result &&o)
 {
