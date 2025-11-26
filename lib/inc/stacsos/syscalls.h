@@ -8,7 +8,7 @@
 #pragma once
 
 namespace stacsos {
-enum class syscall_result_code : u64 { ok = 0, not_found = 1, not_supported = 2 };
+enum class syscall_result_code : u64 { ok = 0, not_found = 1, not_supported = 2, buffer_overflow = 3 };
 
 enum class syscall_numbers {
 	exit = 0,

@@ -33,13 +33,14 @@ using namespace stacsos::kernel::arch::x86;
 
 static syscall_result do_get_dir_contents(process &owner, const char *path, char *buffer, size_t buffer_size)
 {
-    // Perform the directory listing using the fat filesystem
-    fat_filesystem& fatfs = (fat_filesystem&)vfs::get().root().fs();
-    fat_node* dir_node = (fat_node*)vfs::get().lookup(path);  // Get the FS node for the path
+    fat_node* dir_node = (fat_node*)vfs::get().lookup(path);
+	if (!dir_node || dir_node->kind() != fs_node_kind::directory) {
+		return syscall_result { syscall_result_code::not_found, 0 };  // If path is invalid or not a directory
+	}
+	if (dir_node->kind() != fs_node_kind::directory) {
+    	return syscall_result { syscall_result_code::not_supported, 0 };  // Path is not a directory
+	}
 
-    if (!dir_node || dir_node->kind() != fs_node_kind::directory) {
-        return syscall_result { syscall_result_code::not_found, 0 };  // If path is invalid or not a directory
-    }
 
     // Load the children of the directory
     dir_node->load_directory();
@@ -49,17 +50,25 @@ static syscall_result do_get_dir_contents(process &owner, const char *path, char
     for (auto child : dir_node->children()) {
         // Check if the buffer is large enough to hold the entry
         if (offset + sizeof(dirent) > buffer_size) {
-            return syscall_result { syscall_result_code::not_supported, 0 };  // Not enough space in the buffer
+            return syscall_result { syscall_result_code::buffer_overflow, 0 };  // Not enough space in the buffer
         }
 
         // Create a dirent structure for the child entry
         dirent entry;
-        memops::strncpy(entry.name, child->name().c_str(), sizeof(entry.name) - 1);
-        entry.name[sizeof(entry.name) - 1] = '\0';  // Ensure null termination
-        entry.type = (child->kind() == fs_node_kind::directory) ? 1 : 0;
-        entry.size = (entry.type == 0) ? child->size() : 0;  // Only set size for files
+        size_t name_len = child->name().length();
+        if (name_len >= sizeof(entry.name)) {
+            name_len = sizeof(entry.name) - 1;  // Ensure truncation if name is too long
+        }
+        memops::strncpy(entry.name, child->name().c_str(), name_len);
+        entry.name[name_len] = '\0';  // Ensure null-termination
 
-        // Copy the structured entry into the buffer
+        // Set type: 1 for directory, 0 for file
+        entry.type = (child->kind() == fs_node_kind::directory) ? 1 : 0;
+
+        // Set size for files only (directories have size 0)
+        entry.size = (entry.type == 0) ? child->size() : 0;
+
+        // Copy the entry into the buffer
         memops::memcpy(buffer + offset, &entry, sizeof(entry));
         offset += sizeof(entry);
     }
@@ -94,8 +103,6 @@ extern "C" syscall_result handle_syscall(syscall_numbers index, u64 arg0, u64 ar
 {
 	auto &current_thread = thread::current();
 	auto &current_process = current_thread.owner();
-
-	// dprintf("SYSCALL: %u %x %x %x %x\n", index, arg0, arg1, arg2, arg3);
 
 	switch (index) {
 	case syscall_numbers::exit:

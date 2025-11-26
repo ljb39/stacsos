@@ -9,6 +9,7 @@
 
 #include <stacsos/syscalls.h>
 #include <stacsos/dirent.h>
+#include <stacsos/console.h>
 
 namespace stacsos {
 struct rw_result {
@@ -88,7 +89,13 @@ public:
 
 	static void poweroff() { syscall0(syscall_numbers::poweroff); }
 
-	static syscall_result readdir(dirlist_request* request, dirlist_result* result) { return syscall2(syscall_numbers::readdir,(u64)request, (u64)result);}
+	static rw_result get_dir_contents(const char *path, char *buffer, u64 buffer_size)
+    {
+    	console::get().write("\nUser sys-call entered");
+        auto r = syscall3(syscall_numbers::get_dir_contents, (u64)path, (u64)buffer, buffer_size);
+        return rw_result { r.code, r.data };
+		// return rw_result{syscall_result_code::not_found, 0};
+    }
 
 private:
 	static syscall_result syscall0(syscall_numbers id)

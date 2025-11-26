@@ -4,10 +4,10 @@
  * Loell Jean Barit <ljb39@st-andrews.ac.uk>
  */
 
-#include <stacsos/memops.h>
-#include <stacsos/user-syscall.h>
 #include <stacsos/dirent.h>
+#include <stacsos/user-syscall.h>
 #include <stacsos/console.h>
+#include <stacsos/memops.h>
 
 using namespace stacsos;
 
@@ -18,7 +18,6 @@ static void sort_entries(dirent* entries, size_t count)
 {
     for (size_t i = 0; i < count; i++) {
         for (size_t j = i + 1; j < count; j++) {
-
             if (memops::strcmp(entries[i].name, entries[j].name) > 0) {
                 // Swap
                 dirent temp;
@@ -32,7 +31,7 @@ static void sort_entries(dirent* entries, size_t count)
 
 int main(const char *cmdline)
 {
-    console::get().write("\e\x0e");
+    console::get().write("\e\x0e"); // Clear screen
 
     auto& con = console::get();
 
@@ -68,63 +67,57 @@ int main(const char *cmdline)
         path = cmdline;
     }
 
-    // Buffer for directory entries
+    con.write("\nParsing Finished.");
+
+    // // Buffer for directory entries
     const size_t BUFFER_SIZE = 64;
     dirent entries[BUFFER_SIZE];
 
-    // Build request
-    dirlist_request request;
-    request.path = path;
-    request.buffer = entries;
-    request.buffer_count = BUFFER_SIZE;
+    con.write("\nEntries and buffer initialised");
 
-    // Build result struct
-    dirlist_result result;
 
-    // Make syscall
-    auto r = syscalls::readdir(&request, &result);
+    // // Make syscall to fetch the directory contents
+    // // You might need to adjust sys_get_dir_contents to be able to return the number of entries read
+    rw_result result = syscalls::get_dir_contents(path, (char*)entries, BUFFER_SIZE);
 
-    // Improved error messages
-    if (r.code != syscall_result_code::ok) {
-        if (r.code == syscall_result_code::not_found) {
-            con.writef("ls: directory not found: %s\n", path);
-        } else if (r.code == syscall_result_code::not_supported) {
-            con.writef("ls: not a directory: %s\n", path);
-        } else {
-            con.writef("ls: error reading directory: %s\n", path);
-        }
-        return 1;
-    }
+    con.write("\nResults retrieved");
 
-    // No entries
-    if (result.entries_read == 0) {
-        con.write("(empty directory)\n");
-        return 0;
-    }
 
-    // Sort entries before displaying
-    sort_entries(entries, result.entries_read);
+    // // Improved error handling
+    // if (result.code != syscall_result_code::ok) {
+    //     if (result.code == syscall_result_code::not_found) {
+    //         con.writef("ls: directory not found: %s\n", path);
+    //     } else if (result.code == syscall_result_code::not_supported) {
+    //         con.writef("ls: not a directory: %s\n", path);
+    //     } else {
+    //         con.writef("ls: error reading directory: %s\n", path);
+    //     }
+    //     return 1;
+    // }
 
-    // Print directory contents
-    for (size_t i = 0; i < result.entries_read; i++) {
-        if (long_format) {
-            // Improved long format
-            if (entries[i].type == dirent_type::DT_DIR) {
-                con.writef("D  %-30s/\n", entries[i].name);
-            } else {
-                con.writef("F  %-30s %8lu bytes\n",
-                           entries[i].name, entries[i].size);
-            }
-        } else {
-            con.writef("%s\n", entries[i].name);
-        }
-    }
+    // // No entries
+    // if (result.length == 0) {
+    //     con.write("(empty directory)\n");
+    //     return 0;
+    // }
 
-    // Warn if buffer overflow (not all entries shown)
-    if (result.has_more) {
-        con.write("... (more entries not shown)\n");
-    }
+    // // Sort entries before displaying
+    // sort_entries(entries, result.length);
+
+    // // Print directory contents
+    // for (size_t i = 0; i < result.length; i++) {
+    //     if (long_format) {
+    //         // Long format: show file type and size
+    //         if (entries[i].type == 1) {  // Directory
+    //             con.writef("D  %-30s/\n", entries[i].name);
+    //         } else {  // File
+    //             con.writef("F  %-30s %8lu bytes\n", entries[i].name, entries[i].size);
+    //         }
+    //     } else {
+    //         // Short format: just show the file/directory name
+    //         con.writef("%s\n", entries[i].name);
+    //     }
+    // }
 
     return 0;
 }
-
