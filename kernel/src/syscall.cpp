@@ -44,6 +44,11 @@ static syscall_result do_open(process &owner, const char *path)
 	return syscall_result { syscall_result_code::ok, file_object->id() };
 }
 
+/**
+ * 
+ * @param request Pointer to a dirlist_request object
+ * @param result Pointer to the dirlist_result object where the results are written.
+ */
 static syscall_result do_readdir(dirlist_request* request, dirlist_result* result)
 {
 	// Validate pointers
@@ -79,7 +84,7 @@ static syscall_result do_readdir(dirlist_request* request, dirlist_result* resul
 	
 	// Iterate through children
 	size_t index = 0;
-	const auto& children = dir->children();  // Calls load() internally
+	const auto& children = dir->children();
 	
 	for (auto child : children) {
 		if (index >= request->buffer_count) {

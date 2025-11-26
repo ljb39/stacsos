@@ -87,6 +87,8 @@ public:
 
 	static void poweroff() { syscall0(syscall_numbers::poweroff); }
 
+	static syscall_result readdir(dirlist_request* request, dirlist_result* result) { return syscall2(syscall_numbers::readdir,(u64)request, (u64)result);}
+
 private:
 	static syscall_result syscall0(syscall_numbers id)
 	{
@@ -124,5 +126,6 @@ private:
 		asm volatile("syscall" : "=a"(r.code), "=d"(r.data) : "a"(id), "D"(arg0), "S"(arg1), "d"(arg2), "r"(forced_arg3) : "flags", "rcx", "r11");
 		return r;
 	}
+
 };
 } // namespace stacsos
