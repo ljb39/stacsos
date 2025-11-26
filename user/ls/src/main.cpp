@@ -34,44 +34,36 @@ int main(const char *cmdline)
 {
     auto& con = console::get();
 
-    // No command line: provide friendly usage
-    if (!cmdline || memops::strlen(cmdline) == 0) {
-        con.write("usage: ls [-l] <path>\n");
-        return 1;
-    }
-
-    // Parsing command-line arguments
     bool long_format = false;
-    const char* path = nullptr;
 
-    // Flags (only -l supported)
-    while (*cmdline) {
-        if (*cmdline == '-') {
-            cmdline++;
+    // Default path
+    const char* path = ".";
 
-            if (*cmdline == 'l') {
-                long_format = true;
-                cmdline++;
-            } else {
-                con.write("usage: ls [-l] <path>\n");
-                return 1;
-            }
-        } else {
-            break;
-        }
-    }
+    // Handle null cmdline pointer
+    if (!cmdline) cmdline = "";
 
-    // Skip spaces
-    while (*cmdline == ' ') {
+    // Consume leading spaces
+    while (*cmdline == ' ') cmdline++;
+
+    // Parse flags
+    if (*cmdline == '-') {
         cmdline++;
+
+        if (*cmdline == 'l') {
+            long_format = true;
+            cmdline++;
+        } else {
+            con.write("usage: ls [-l] <path>\n");
+            return 1;
+        }
+
+        // Skip spaces after flag
+        while (*cmdline == ' ') cmdline++;
     }
 
-    // Path must be provided
+    // If a path remains, override default '.'
     if (*cmdline != '\0') {
         path = cmdline;
-    } else {
-        con.write("usage: ls [-l] <path>\n");
-        return 1;
     }
 
     // Buffer for directory entries
@@ -90,9 +82,15 @@ int main(const char *cmdline)
     // Make syscall
     auto r = syscalls::readdir(&request, &result);
 
-    // Check syscall result
+    // Improved error messages
     if (r.code != syscall_result_code::ok) {
-        con.writef("ls: cannot read directory '%s'\n", path);
+        if (r.code == syscall_result_code::not_found) {
+            con.writef("ls: directory not found: %s\n", path);
+        } else if (r.code == syscall_result_code::not_supported) {
+            con.writef("ls: not a directory: %s\n", path);
+        } else {
+            con.writef("ls: error reading directory: %s\n", path);
+        }
         return 1;
     }
 
@@ -102,10 +100,10 @@ int main(const char *cmdline)
         return 0;
     }
 
-    //Sort entries before displaying
+    // Sort entries before displaying
     sort_entries(entries, result.entries_read);
 
-    //Print directory contents
+    // Print directory contents
     for (size_t i = 0; i < result.entries_read; i++) {
 
         // Skip special FAT entries
@@ -115,24 +113,23 @@ int main(const char *cmdline)
         }
 
         if (long_format) {
-            //Long format: show type and size
-            char type = (entries[i].type == dirent_type::DT_FILE) ? 'F' : 'D';
-            con.writef("[%c] %-30s", type, entries[i].name);
-
-            if (entries[i].type == dirent_type::DT_FILE) {
-                con.writef(" %lu", entries[i].size);
+            // Improved long format
+            if (entries[i].type == dirent_type::DT_DIR) {
+                con.writef("D  %-30s/\n", entries[i].name);
+            } else {
+                con.writef("F  %-30s %8lu bytes\n",
+                           entries[i].name, entries[i].size);
             }
-
-            con.write("\n");
         } else {
             con.writef("%s\n", entries[i].name);
         }
     }
 
-    //Warn if buffer overflow
+    // Warn if buffer overflow (not all entries shown)
     if (result.has_more) {
         con.write("... (more entries not shown)\n");
     }
 
     return 0;
 }
+
