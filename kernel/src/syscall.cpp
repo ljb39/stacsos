@@ -28,6 +28,25 @@ using namespace stacsos::kernel::fs;
 using namespace stacsos::kernel::mem;
 using namespace stacsos::kernel::arch::x86;
 
+static void copy_name(char dest[MAX_FILENAME_LEN], const string& src)
+{
+    size_t len = src.length();
+    if (len >= MAX_FILENAME_LEN)
+        len = MAX_FILENAME_LEN - 1;
+
+    // Copy characters
+    for (size_t i = 0; i < len; i++)
+        dest[i] = src[i];
+
+    // Null terminate
+    dest[len] = '\0';
+
+    // Zero-pad remaining space (avoids leaking stack)
+    for (size_t i = len + 1; i < MAX_FILENAME_LEN; i++)
+        dest[i] = '\0';
+}
+
+
 static syscall_result do_open(process &owner, const char *path)
 {
 	auto node = vfs::get().lookup(path);
@@ -95,22 +114,7 @@ static syscall_result do_readdir(dirlist_request* request, dirlist_result* resul
         // Build directory entry
         dirent entry;
         
-        // Copy name safely
-        const string& child_name = child->name();
-        size_t name_len = child_name.length();
-        if (name_len >= MAX_FILENAME_LEN) {
-            name_len = MAX_FILENAME_LEN - 1;
-        }
-        
-        for (size_t i = 0; i < name_len; i++) {
-            entry.name[i] = child_name[i];
-        }
-        entry.name[name_len] = '\0';
-
-        // Fill remaining characters with null for safety
-        for (size_t i = name_len + 1; i < MAX_FILENAME_LEN; i++) {
-            entry.name[i] = '\0';
-        }
+        copy_name(entry.name, child->name());
         
         // Set type
         entry.type = (child->kind() == fs_node_kind::file) ? 

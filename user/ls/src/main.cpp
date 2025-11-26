@@ -11,104 +11,121 @@
 
 using namespace stacsos;
 
-int main(const char *cmdline) 
+/**
+ * Sort directory entries alphabetically (ascending)
+ */
+static void sort_entries(dirent* entries, size_t count)
+{
+    for (size_t i = 0; i < count; i++) {
+        for (size_t j = i + 1; j < count; j++) {
+
+            // Case-insensitive alphabetical compare via memops::strcmp
+            if (memops::strcmp(entries[i].name, entries[j].name) > 0) {
+                // Swap
+                dirent temp = entries[i];
+                entries[i] = entries[j];
+                entries[j] = temp;
+            }
+        }
+    }
+}
+
+int main(const char *cmdline)
 {
     auto& con = console::get();
 
+    // No command line: provide friendly usage
     if (!cmdline || memops::strlen(cmdline) == 0) {
-		console::get().write("error: usage: ls [-l] <path>\n");
-		return 1;
-	}
-
-    /**
-     * Parsing command line arguments.
-     * Adapted from the implementation found in user/cat/src
-     */
-    bool long_format = false;
-    const char* path = nullptr;
-    
-    //Parsing flags
-    while(*cmdline) {
-        //Parse flags
-        if(*cmdline == '-') {
-            cmdline++;
-
-            if (*cmdline++ == 'l') long_format = true;
-            else{
-                console::get().write("error: usage: ls [-l] <path>\n");
-                return 1;
-            }
-        } else break;
-    }
-
-    while (*cmdline == ' ') {
-		cmdline++;
-	};
-
-    //Parsing Path
-
-    if (*cmdline != '\0') {
-        path = cmdline;  // Point to the path string
-    } else {
-        // No path provided - show error or use default
-        console::get().write("error: usage: ls [-l] <path>\n");
+        con.write("usage: ls [-l] <path>\n");
         return 1;
     }
-    
-    // console::get().writef("ls: Directory: %s\n", path);
-    // console::get().writef("ls: Long format: %s\n", long_format ? "yes" : "no");
-    
-    // // TODO: Call readdir syscall here
-    // console::get().write("ls: Syscall not implemented yet\n");
 
+    // Parsing command-line arguments
+    bool long_format = false;
+    const char* path = nullptr;
+
+    // Flags (only -l supported)
+    while (*cmdline) {
+        if (*cmdline == '-') {
+            cmdline++;
+
+            if (*cmdline == 'l') {
+                long_format = true;
+                cmdline++;
+            } else {
+                con.write("usage: ls [-l] <path>\n");
+                return 1;
+            }
+        } else {
+            break;
+        }
+    }
+
+    // Skip spaces
+    while (*cmdline == ' ') {
+        cmdline++;
+    }
+
+    // Path must be provided
+    if (*cmdline != '\0') {
+        path = cmdline;
+    } else {
+        con.write("usage: ls [-l] <path>\n");
+        return 1;
+    }
+
+    // Buffer for directory entries
     const size_t BUFFER_SIZE = 64;
     dirent entries[BUFFER_SIZE];
 
-    // Prepare request structure
+    // Build request
     dirlist_request request;
     request.path = path;
     request.buffer = entries;
     request.buffer_count = BUFFER_SIZE;
-    
-    // Prepare result structure
+
+    // Build result struct
     dirlist_result result;
-    
-    // Make the syscall!
-    auto syscall_result = syscalls::readdir(&request, &result);
-    
-    // Check for errors
-    if (syscall_result.code != syscall_result_code::ok) {
-        con.writef("error: cannot read directory '%s'\n", path);
+
+    // Make syscall
+    auto r = syscalls::readdir(&request, &result);
+
+    // Check syscall result
+    if (r.code != syscall_result_code::ok) {
+        con.writef("ls: cannot read directory '%s'\n", path);
         return 1;
     }
-    
-    // Check if no entries found
+
+    // No entries
     if (result.entries_read == 0) {
-        con.writef("(empty directory)\n");
+        con.write("(empty directory)\n");
         return 0;
     }
-    
-    // Display results
+
+    //Sort entries before displaying
+    sort_entries(entries, result.entries_read);
+
+    //Print directory contents
     for (size_t i = 0; i < result.entries_read; i++) {
         if (long_format) {
-            // Long format: [F] filename    12345
+            //Long format: show type and size
             char type = (entries[i].type == dirent_type::DT_FILE) ? 'F' : 'D';
             con.writef("[%c] %-30s", type, entries[i].name);
-            
+
             if (entries[i].type == dirent_type::DT_FILE) {
                 con.writef(" %lu", entries[i].size);
             }
-            con.writef("\n");
+
+            con.write("\n");
         } else {
-            // Short format: just filename
             con.writef("%s\n", entries[i].name);
         }
     }
-    
-    // Optionally warn if directory had more entries than buffer could hold
+
+    //Warn if buffer overflow
     if (result.has_more) {
-        con.writef("... (more entries not shown)\n");
+        con.write("... (more entries not shown)\n");
     }
-    
+
     return 0;
 }
