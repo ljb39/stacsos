@@ -29,7 +29,8 @@ enum class syscall_numbers {
 	sleep = 15,
 	poweroff = 16,
 	ioctl = 17, 
-	readdir = 18
+	get_dir_contents = 18
+
 };
 
 struct syscall_result {

@@ -10,6 +10,7 @@
 #include <stacsos/kernel/debug.h>
 #include <stacsos/kernel/fs/vfs.h>
 #include <stacsos/kernel/fs/fat.h>
+#include <stacsos/kernel/fs/fs-node.h>
 #include <stacsos/kernel/mem/address-space.h>
 #include <stacsos/kernel/obj/object-manager.h>
 #include <stacsos/kernel/obj/object.h>
@@ -18,8 +19,8 @@
 #include <stacsos/kernel/sched/sleeper.h>
 #include <stacsos/kernel/sched/thread.h>
 #include <stacsos/syscalls.h>
-#include <stacsos/dirent.h> 
 #include <stacsos/memops.h>
+#include <stacsos/dirent.h>
 
 using namespace stacsos;
 using namespace stacsos::kernel;
@@ -28,6 +29,43 @@ using namespace stacsos::kernel::obj;
 using namespace stacsos::kernel::fs;
 using namespace stacsos::kernel::mem;
 using namespace stacsos::kernel::arch::x86;
+
+
+static syscall_result do_get_dir_contents(process &owner, const char *path, char *buffer, size_t buffer_size)
+{
+    // Perform the directory listing using the fat filesystem
+    fat_filesystem& fatfs = (fat_filesystem&)vfs::get().root().fs();
+    fat_node* dir_node = (fat_node*)vfs::get().lookup(path);  // Get the FS node for the path
+
+    if (!dir_node || dir_node->kind() != fs_node_kind::directory) {
+        return syscall_result { syscall_result_code::not_found, 0 };  // If path is invalid or not a directory
+    }
+
+    // Load the children of the directory
+    dir_node->load_directory();
+
+    // Copy the directory content names to the buffer using a structured format (dirent)
+    size_t offset = 0;
+    for (auto child : dir_node->children()) {
+        // Check if the buffer is large enough to hold the entry
+        if (offset + sizeof(dirent) > buffer_size) {
+            return syscall_result { syscall_result_code::not_supported, 0 };  // Not enough space in the buffer
+        }
+
+        // Create a dirent structure for the child entry
+        dirent entry;
+        memops::strncpy(entry.name, child->name().c_str(), sizeof(entry.name) - 1);
+        entry.name[sizeof(entry.name) - 1] = '\0';  // Ensure null termination
+        entry.type = (child->kind() == fs_node_kind::directory) ? 1 : 0;
+        entry.size = (entry.type == 0) ? child->size() : 0;  // Only set size for files
+
+        // Copy the structured entry into the buffer
+        memops::memcpy(buffer + offset, &entry, sizeof(entry));
+        offset += sizeof(entry);
+    }
+
+    return syscall_result { syscall_result_code::ok, offset };  // Return the number of bytes copied
+}
 
 
 static syscall_result do_open(process &owner, const char *path)
@@ -45,102 +83,6 @@ static syscall_result do_open(process &owner, const char *path)
 	auto file_object = object_manager::get().create_file_object(owner, file);
 	return syscall_result { syscall_result_code::ok, file_object->id() };
 }
-
-/**
- * 
- * @param request Pointer to a dirlist_request object
- * @param result Pointer to the dirlist_result object where the results are written.
- */
-static syscall_result do_readdir(dirlist_request* request, dirlist_result* result)
-{
-    // Validate pointers
-    if (!request || !result || !request->path || !request->buffer) {
-        return { syscall_result_code::not_supported, 0 };
-    }
-
-    // Validate buffer count
-    if (request->buffer_count == 0 || request->buffer_count > 1024) {
-        dprintf("do_readdir: invalid buffer_count=%lu\n", request->buffer_count);
-        return { syscall_result_code::not_supported, 0 };
-    }
-
-    dprintf("do_readdir: path='%s', buffer_count=%lu\n",
-            request->path, request->buffer_count);
-
-    // Lookup the path through VFS
-    auto node = vfs::get().lookup(request->path);
-    
-    if (!node) {
-        dprintf("do_readdir: path not found: %s\n", request->path);
-        return { syscall_result_code::not_found, 0 };
-    }
-
-    // Ensure this is a directory
-    if (node->kind() != fs_node_kind::directory) {
-        dprintf("do_readdir: not a directory: %s\n", request->path);
-        return { syscall_result_code::not_supported, 0 };
-    }
-
-    // StACSOS only uses FAT, so static_cast is safe.
-    fat_node* dir = static_cast<fat_node*>(node);
-
-    // Initialize result structure
-    result->entries_read = 0;
-    result->has_more = false;
-
-    size_t index = 0;
-    const auto& children = dir->children();
-
-    for (auto child : children) {
-
-        // Skip FAT special entries
-        if (child->name() == "." || child->name() == "..") {
-            continue;
-        }
-
-        if (index >= request->buffer_count) {
-            result->has_more = true;
-            break;
-        }
-
-        // Get destination entry
-        dirent* dest = &request->buffer[index];
-
-        size_t name_len = child->name().length();
-        if (name_len >= MAX_FILENAME_LEN)
-            name_len = MAX_FILENAME_LEN - 1;
-
-        // Copy the name into the destination buffer (null-terminated)
-        memops::memcpy(dest->name, child->name().c_str(), name_len);
-        dest->name[name_len] = '\0';  // Ensure null-termination
-
-        // Set type
-        dest->type = (child->kind() == fs_node_kind::file)
-                        ? dirent_type::DT_FILE
-                        : dirent_type::DT_DIR;
-
-        // Set size for files only
-        dest->size = (dest->type == dirent_type::DT_FILE)
-                        ? child->size()
-                        : 0;
-
-        // Zero pad the rest of the name buffer if necessary
-        for (size_t i = name_len + 1; i < MAX_FILENAME_LEN; i++) {
-            dest->name[i] = '\0';
-        }
-
-        index++;
-    }
-
-    result->entries_read = index;
-
-    dprintf("do_readdir: returned %lu entries%s\n",
-            index, result->has_more ? " (has_more)" : "");
-
-    return { syscall_result_code::ok, index };
-}
-
-
 
 static syscall_result operation_result_to_syscall_result(operation_result &&o)
 {
@@ -282,9 +224,13 @@ extern "C" syscall_result handle_syscall(syscall_numbers index, u64 arg0, u64 ar
 		return syscall_result { syscall_result_code::ok, 0 };
 	}
 
-	case syscall_numbers::readdir: {
-		return do_readdir((dirlist_request*)arg0, (dirlist_result*)arg1);
-	}
+	case syscall_numbers::get_dir_contents: {
+		const char* path = (const char*)arg0;  // Directory path (from arg0)
+		char* buffer = (char*)arg1;            // Buffer to store the directory contents
+		size_t buffer_size = (size_t)arg2;     // Size of the buffer (arg2)
+
+		return do_get_dir_contents(current_process, path, buffer, buffer_size);
+    }
 
 	default:
 		dprintf("ERROR: unsupported syscall: %lx\n", index);

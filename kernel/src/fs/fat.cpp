@@ -160,106 +160,81 @@ fs_node *fat_node::resolve_child(const string &name)
 	return nullptr;
 }
 
-void fat_node::load()
+void fat_node::load() 
 {
-	if (loaded_) {
-		return;
-	}
+    if (loaded_) {
+        return; 
+    }
 
-	fat_filesystem &fatfs = ((fat_filesystem &)fs());
+    fat_filesystem &fatfs = (fat_filesystem &)fs();
 
-	u64 this_cluster = cluster_;
+    u64 this_cluster = cluster_;  
 
-	do {
-		// Read in the current cluster data.
-		auto cluster_data = fatfs.read_cluster(this_cluster);
-
-		// Parse dentries from this cluster
+    do {
+        auto cluster_data = fatfs.read_cluster(this_cluster);
 		bool has_long_filename = false;
-		string long_filename;
+        string long_filename;
 
-		for (const u8 *dentry = &(cluster_data.get())[0]; dentry < &(cluster_data.get())[512 * fatfs.sectors_per_cluster]; dentry += 32) {
-			if (dentry[0] == 0) {
-				// No more files in this directory.
-				break;
-			} else if (dentry[0] == 0xe5) {
-				// Entry is unused -- ignore.
-				continue;
-			}
 
-			if (dentry[11] == 0x0f) {
-				has_long_filename = true;
+        for (const u8 *dentry = &(cluster_data.get())[0]; dentry < &(cluster_data.get())[512 * fatfs.sectors_per_cluster]; dentry += 32) {
+            if (dentry[0] == 0) {
+                // No more entries in this cluster.
+                break;
+            } else if (dentry[0] == 0xe5) {
+                // Entry is unused -- ignore.
+                continue;
+            }
 
-				string lfn_chunk;
+            // Check if the entry uses long filename (LFN) support
+            if (dentry[11] == 0x0f) {
+                has_long_filename = true;
+                string lfn_chunk;
+                
+                // Long filename entries are split across several directory entries.
+                // Concatenate the chunks to form the full filename.
+                for (int i = 1; i < 11; i += 2) {
+                    if (dentry[i] == 0) break;
+                    lfn_chunk += dentry[i];
+                }
+                long_filename = lfn_chunk + long_filename;  // Combine chunks in reverse order.
+                continue;
+            }
 
-				bool stop = false;
-				for (int i = 1; i < 11; i += 2) {
-					if (dentry[i] == 0) {
-						stop = true;
-						break;
-					}
+            // Short filename (8.3 format) entry
+            char short_filename[12] = { 0 };
+            memops::memcpy(short_filename, dentry, 11);
+            for (int i = 0; i < 11; i++) {
+                if (short_filename[i] == 0x20) {
+                    short_filename[i] = 0;
+                } else if (short_filename[i] > 0x40 && short_filename[i] < 0x5b) {
+                    short_filename[i] |= 0x20;
+                }
+            }
 
-					lfn_chunk += dentry[i];
-				}
+            string filename;
+            if (has_long_filename) {
+                filename = long_filename;
+                has_long_filename = false;
+                long_filename = "";  // Reset the string to an empty value for the next entry
+            } else {
+                filename = string(short_filename);  // Use the short filename
+            }
 
-				if (!stop) {
-					for (int i = 14; i < 26; i += 2) {
-						if (dentry[i] == 0) {
-							stop = true;
-							break;
-						}
-						lfn_chunk += dentry[i];
-					}
-				}
+            // Extract cluster and size from the directory entry
+            u32 cluster = ((u32)*(u16 *)&dentry[26]) | ((u32)*(u16 *)&dentry[20] << 16);
+            u64 sector = (cluster - 2) * fatfs.sectors_per_cluster + fatfs.first_data_sector;
+            u64 size = *(u32 *)&dentry[28];
 
-				if (!stop) {
-					for (int i = 28; i < 32; i += 2) {
-						if (dentry[i] == 0) {
-							stop = true;
-							break;
-						}
-						lfn_chunk += dentry[i];
-					}
-				}
+            // Create a new fat_node for the entry and add it to children_
+            children_.append(new fat_node(fs(), this, (dentry[11] & 0x10) ? fs_node_kind::directory : fs_node_kind::file, filename, sector, cluster, size));
+        }
 
-				long_filename = lfn_chunk + long_filename;
-				continue;
-			}
+        // Move to the next cluster in the chain
+        this_cluster = fatfs.next_cluster(this_cluster);
 
-			char short_filename[12] = { 0 };
-			memops::memcpy(short_filename, dentry, 11);
-			for (int i = 0; i < 11; i++) {
-				if (short_filename[i] == 0x20) {
-					short_filename[i] = 0;
-				} else if (short_filename[i] > 0x40 && short_filename[i] < 0x5b) {
-					short_filename[i] |= 0x20;
-				}
-			}
+    } while (this_cluster < 0xfff8);  // Check for the end of the cluster chain
 
-			string filename;
-			if (has_long_filename) {
-				filename = long_filename;
-				has_long_filename = false;
-				long_filename = string();
-			} else {
-				filename = string(short_filename);
-			}
-
-			u32 cluster = ((u32) * ((u16 *)&dentry[26])) | (((u32) * ((u16 *)&dentry[20])) << 16);
-			u64 sector = ((cluster - 2) * fatfs.sectors_per_cluster) + fatfs.first_data_sector;
-			u64 size = *(u32 *)&dentry[28];
-
-			children_.append(new fat_node(fs(), this, (dentry[11] & 0x10) ? fs_node_kind::directory : fs_node_kind::file, filename, sector, cluster, size));
-		}
-
-		this_cluster = fatfs.next_cluster(this_cluster);
-		if (this_cluster >= 0xfff8) {
-			// No more clusters.
-			break;
-		}
-	} while (true);
-
-	loaded_ = true;
+    loaded_ = true;  // Mark the node as loaded
 }
 
 void fat_file::read_cluster_list(u64 first_cluster, u64 file_size)

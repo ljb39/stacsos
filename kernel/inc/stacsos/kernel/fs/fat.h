@@ -64,6 +64,10 @@ public:
 		return children_;
 	}
 
+	void load_directory() {
+        load();
+    }
+
 	u64 size() const { return data_size_; }
 
 protected:

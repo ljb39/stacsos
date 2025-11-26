@@ -13,7 +13,7 @@ using namespace stacsos::kernel::fs;
 
 fs_node *fs_node::lookup(const char *path)
 {
-	// dprintf("fs: lookup: %s\n", path);
+
 
 	// Paths from nodes MUST be relative.
 	if (path[0] == '/') {
