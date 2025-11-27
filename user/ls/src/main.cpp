@@ -83,41 +83,41 @@ int main(const char *cmdline)
     con.write("\nResults retrieved");
 
 
-    // // Improved error handling
-    // if (result.code != syscall_result_code::ok) {
-    //     if (result.code == syscall_result_code::not_found) {
-    //         con.writef("ls: directory not found: %s\n", path);
-    //     } else if (result.code == syscall_result_code::not_supported) {
-    //         con.writef("ls: not a directory: %s\n", path);
-    //     } else {
-    //         con.writef("ls: error reading directory: %s\n", path);
-    //     }
-    //     return 1;
-    // }
+    // Improved error handling
+    if (result.code != syscall_result_code::ok) {
+        if (result.code == syscall_result_code::not_found) {
+            con.writef("ls: directory not found: %s\n", path);
+        } else if (result.code == syscall_result_code::not_supported) {
+            con.writef("ls: not a directory: %s\n", path);
+        } else {
+            con.writef("ls: error reading directory: %s\n", path);
+        }
+        return 1;
+    }
 
-    // // No entries
-    // if (result.length == 0) {
-    //     con.write("(empty directory)\n");
-    //     return 0;
-    // }
+    // No entries
+    if (result.length == 0) {
+        con.write("(empty directory)\n");
+        return 0;
+    }
 
-    // // Sort entries before displaying
-    // sort_entries(entries, result.length);
+    // Sort entries before displaying
+    sort_entries(entries, result.length);
 
-    // // Print directory contents
-    // for (size_t i = 0; i < result.length; i++) {
-    //     if (long_format) {
-    //         // Long format: show file type and size
-    //         if (entries[i].type == 1) {  // Directory
-    //             con.writef("D  %-30s/\n", entries[i].name);
-    //         } else {  // File
-    //             con.writef("F  %-30s %8lu bytes\n", entries[i].name, entries[i].size);
-    //         }
-    //     } else {
-    //         // Short format: just show the file/directory name
-    //         con.writef("%s\n", entries[i].name);
-    //     }
-    // }
+    // Print directory contents
+    for (size_t i = 0; i < result.length; i++) {
+        if (long_format) {
+            // Long format: show file type and size
+            if (entries[i].type == 1) {  // Directory
+                con.writef("D  %-30s/\n", entries[i].name);
+            } else {  // File
+                con.writef("F  %-30s %8lu bytes\n", entries[i].name, entries[i].size);
+            }
+        } else {
+            // Short format: just show the file/directory name
+            con.writef("%s\n", entries[i].name);
+        }
+    }
 
     return 0;
 }

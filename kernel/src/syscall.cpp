@@ -34,6 +34,9 @@ using namespace stacsos::kernel::arch::x86;
 static syscall_result do_get_dir_contents(process &owner, const char *path, char *buffer, size_t buffer_size)
 {
     fat_node* dir_node = (fat_node*)vfs::get().lookup(path);
+
+	dprintf("\n[get_dir_contents] lookup('%s') returned %p", path, dir_node);
+
 	if (!dir_node || dir_node->kind() != fs_node_kind::directory) {
 		return syscall_result { syscall_result_code::not_found, 0 };  // If path is invalid or not a directory
 	}

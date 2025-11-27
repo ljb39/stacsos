@@ -94,7 +94,6 @@ public:
     	console::get().write("\nUser sys-call entered");
         auto r = syscall3(syscall_numbers::get_dir_contents, (u64)path, (u64)buffer, buffer_size);
         return rw_result { r.code, r.data };
-		// return rw_result{syscall_result_code::not_found, 0};
     }
 
 private:
