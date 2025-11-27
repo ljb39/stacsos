@@ -32,20 +32,23 @@ static void sort_entries(dirent* entries, size_t count)
 
 int main(const char *cmdline)
 {
-    console::get().write("\e\x0e"); // Clear screen
     auto& con = console::get();
+    console::get().write("\e\x0e"); // Clear screen
 
     bool long_format = false;
-    const char* path = "";
+    const char* path = "/";      // Default = root directory
 
-    // ----- Parse Arguments -----
-
-    if (!cmdline) cmdline = "/";
+    // -------------------------
+    // SAFE CMDLINE HANDLING
+    // -------------------------
+    if (!cmdline) cmdline = "";
 
     while (*cmdline == ' ') cmdline++;
 
+    // ----- Parse -l flag -----
     if (*cmdline == '-') {
         cmdline++;
+
         if (*cmdline == 'l') {
             long_format = true;
             cmdline++;
@@ -53,47 +56,45 @@ int main(const char *cmdline)
             con.write("usage: ls [-l] <path>\n");
             return 1;
         }
+
         while (*cmdline == ' ') cmdline++;
     }
 
+    // If a path is supplied, override default "/"
     if (*cmdline != '\0') {
         path = cmdline;
     }
 
-    // ----- Allocate Entry Buffer in HEAP -----
+    // -------------------------
+    // ALLOCATE ENTRY BUFFER
+    // -------------------------
 
     const size_t ENTRY_COUNT = 64;
     const size_t BUFFER_BYTES = ENTRY_COUNT * sizeof(dirent);
 
     auto mem = syscalls::alloc_mem(BUFFER_BYTES);
     if (mem.code != syscall_result_code::ok) {
-    con.write("ls: alloc_mem failed\n");
-    return 1;
-    }
-
-    dirent* entries = (dirent*)mem.ptr;
-
-    // ----- Perform Directory Read -----
-    rw_result result = syscalls::get_dir_contents(path, (char*)entries, BUFFER_BYTES);
-
-    if (result.code != syscall_result_code::ok) {
-        switch (result.code) {
-            case syscall_result_code::not_found:
-                con.writef("ls: directory not found: %s\n", path);
-                break;
-
-            case syscall_result_code::not_supported:
-                con.writef("ls: not a directory: %s\n", path);
-                break;
-
-            default:
-                con.writef("ls: error reading directory: %s\n", path);
-                break;
-        }
+        con.write("ls: alloc_mem failed\n");
         return 1;
     }
 
-    // ----- Handle Zero Entries -----
+    dirent* entries = (dirent*) mem.ptr;
+
+    // -------------------------
+    // PERFORM DIRECTORY READ
+    // -------------------------
+    rw_result result = syscalls::get_dir_contents(path, (char*)entries, BUFFER_BYTES);
+
+    if (result.code != syscall_result_code::ok) {
+        if (result.code == syscall_result_code::not_found)
+            con.writef("ls: directory not found: %s\n", path);
+        else if (result.code == syscall_result_code::not_supported)
+            con.writef("ls: not a directory: %s\n", path);
+        else
+            con.writef("ls: error reading directory: %s\n", path);
+
+        return 1;
+    }
 
     size_t count = result.length / sizeof(dirent);
 
@@ -102,72 +103,69 @@ int main(const char *cmdline)
         return 0;
     }
 
-    // ----- Sort -----
-
+    // -------------------------
+    // SORT RESULTS
+    // -------------------------
     sort_entries(entries, count);
 
-    // ----- Display Results -----
+    // -------------------------
+    // SHORT FORMAT
+    // -------------------------
+    if (!long_format) {
+        for (size_t i = 0; i < count; i++) {
+            if (entries[i].type == 1)
+                con.writef("%s/\n", entries[i].name);
+            else
+                con.writef("%s\n", entries[i].name);
+        }
+        return 0;
+    }
 
-    // Find longest name to align columns
+    // -------------------------
+    // LONG FORMAT
+    // -------------------------
+
+    // Find longest filename for alignment
     size_t max_name_len = 0;
     for (size_t i = 0; i < count; i++) {
         size_t len = memops::strlen(entries[i].name);
-        if (len > max_name_len) {
-            max_name_len = len;
-        }
+        if (len > max_name_len) max_name_len = len;
     }
+    if (max_name_len > 40) max_name_len = 40;
 
-    // Optional: clamp to avoid very wide filenames
-    if (max_name_len > 40) {
-        max_name_len = 40;
-    }
-
+    // Output long format
     for (size_t i = 0; i < count; i++) {
-    const bool is_dir = (entries[i].type == 1);
+        const bool is_dir = (entries[i].type == 1);
 
-    // Tag
-    if (is_dir) {
-        con.write("[D] ");
-    } else {
-        con.write("[F] ");
-    }
+        con.write(is_dir ? "[D] " : "[F] ");
 
-    // Name (optionally truncated if absurdly long)
-    const char* name = entries[i].name;
-    size_t name_len = memops::strlen(name);
-    if (name_len > max_name_len) {
-        name_len = max_name_len;
-    }
+        size_t name_len = memops::strlen(entries[i].name);
+        if (name_len > max_name_len) name_len = max_name_len;
 
-    // Print the name itself
-    for (size_t j = 0; j < name_len; j++) {
-        char ch[2] = { name[j], 0 };
-        con.write(ch);
-    }
-
-    // If it's a directory, show a trailing '/'
-    if (is_dir) {
-        con.write("/");
-    }
-
-    // Pad spaces up to column
-    size_t printed_len = name_len + (is_dir ? 1 : 0);
-    const size_t col_width = max_name_len + 2;  // +2 spacing
-    if (printed_len < col_width) {
-        for (size_t s = printed_len; s < col_width; s++) {
-            con.write(" ");
+        // Print filename char-by-char
+        for (size_t j = 0; j < name_len; j++) {
+            char ch[2] = { entries[i].name[j], 0 };
+            con.write(ch);
         }
+
+        if (is_dir) con.write("/");
+
+        // Padding
+        size_t printed_len = name_len + (is_dir ? 1 : 0);
+        size_t col_width = max_name_len + 2;
+
+        while (printed_len < col_width) {
+            con.write(" ");
+            printed_len++;
+        }
+
+        // File size (only for files)
+        if (!is_dir)
+            con.writef("%u bytes", (unsigned)entries[i].size);
+
+        con.write("\n");
     }
-
-    // File size (for files only)
-    if (!is_dir) {
-        con.write(" ");
-        con.writef("%u bytes", (unsigned)entries[i].size);
-    }
-
-    con.write("\n");
-}
-
 
     return 0;
 }
+
