@@ -91,7 +91,6 @@ public:
 
 	static rw_result get_dir_contents(const char *path, char *buffer, u64 buffer_size)
     {
-    	console::get().write("\nUser sys-call entered");
         auto r = syscall3(syscall_numbers::get_dir_contents, (u64)path, (u64)buffer, buffer_size);
         return rw_result { r.code, r.data };
     }
@@ -120,6 +119,7 @@ private:
 
 	static syscall_result syscall3(syscall_numbers id, u64 arg0, u64 arg1, u64 arg2)
 	{
+
 		syscall_result r;
 		asm volatile("syscall" : "=a"(r.code), "=d"(r.data) : "a"(id), "D"(arg0), "S"(arg1), "d"(arg2) : "flags", "rcx");
 		return r;

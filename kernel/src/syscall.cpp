@@ -21,6 +21,7 @@
 #include <stacsos/syscalls.h>
 #include <stacsos/memops.h>
 #include <stacsos/dirent.h>
+#include <stacsos/kernel/debug.h>
 
 using namespace stacsos;
 using namespace stacsos::kernel;
@@ -33,20 +34,25 @@ using namespace stacsos::kernel::arch::x86;
 
 static syscall_result do_get_dir_contents(process &owner, const char *path, char *buffer, size_t buffer_size)
 {
+	dprintf("\n do_get_dir_contents entered.");
+
     fat_node* dir_node = (fat_node*)vfs::get().lookup(path);
 
 	dprintf("\n[get_dir_contents] lookup('%s') returned %p", path, dir_node);
 
 	if (!dir_node || dir_node->kind() != fs_node_kind::directory) {
-		return syscall_result { syscall_result_code::not_found, 0 };  // If path is invalid or not a directory
+		dprintf("\ninvalid path");
+		return syscall_result { syscall_result_code::not_found, 0 };  // If path is invalid
 	}
 	if (dir_node->kind() != fs_node_kind::directory) {
+		dprintf("\npath does not lead to a directory");
     	return syscall_result { syscall_result_code::not_supported, 0 };  // Path is not a directory
 	}
 
 
     // Load the children of the directory
     dir_node->load_directory();
+	dprintf("\nDirectory children loaded.");
 
     // Copy the directory content names to the buffer using a structured format (dirent)
     size_t offset = 0;
@@ -75,6 +81,7 @@ static syscall_result do_get_dir_contents(process &owner, const char *path, char
         memops::memcpy(buffer + offset, &entry, sizeof(entry));
         offset += sizeof(entry);
     }
+	dprintf("\nDirectory content made into dirents and copied to buffer");
 
     return syscall_result { syscall_result_code::ok, offset };  // Return the number of bytes copied
 }
@@ -104,7 +111,10 @@ static syscall_result operation_result_to_syscall_result(operation_result &&o)
 
 extern "C" syscall_result handle_syscall(syscall_numbers index, u64 arg0, u64 arg1, u64 arg2, u64 arg3)
 {
+	// dprintf("\nHandle syscall entered: %llu \n", static_cast<u64>(index));
+	
 	auto &current_thread = thread::current();
+
 	auto &current_process = current_thread.owner();
 
 	switch (index) {

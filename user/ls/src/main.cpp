@@ -9,6 +9,7 @@
 #include <stacsos/console.h>
 #include <stacsos/memops.h>
 
+
 using namespace stacsos;
 
 /**
@@ -32,24 +33,19 @@ static void sort_entries(dirent* entries, size_t count)
 int main(const char *cmdline)
 {
     console::get().write("\e\x0e"); // Clear screen
-
     auto& con = console::get();
 
     bool long_format = false;
-
-    // Default path
     const char* path = ".";
 
-    // Handle null cmdline pointer
+    // ----- Parse Arguments -----
+
     if (!cmdline) cmdline = "";
 
-    // Consume leading spaces
     while (*cmdline == ' ') cmdline++;
 
-    // Parse flags
     if (*cmdline == '-') {
         cmdline++;
-
         if (*cmdline == 'l') {
             long_format = true;
             cmdline++;
@@ -57,64 +53,70 @@ int main(const char *cmdline)
             con.write("usage: ls [-l] <path>\n");
             return 1;
         }
-
-        // Skip spaces after flag
         while (*cmdline == ' ') cmdline++;
     }
 
-    // If a path remains, override default '.'
     if (*cmdline != '\0') {
         path = cmdline;
     }
 
-    con.write("\nParsing Finished.");
+    // ----- Allocate Entry Buffer in HEAP -----
 
-    // // Buffer for directory entries
-    const size_t BUFFER_SIZE = 64;
-    dirent entries[BUFFER_SIZE];
+    const size_t ENTRY_COUNT = 64;   // safe & expandable
+    const size_t BUFFER_BYTES = ENTRY_COUNT * sizeof(dirent);
 
-    con.write("\nEntries and buffer initialised");
+    auto mem = syscalls::alloc_mem(BUFFER_BYTES);
+    if (mem.code != syscall_result_code::ok) {
+        con.write("ls: alloc_mem failed\n");
+        return 1;
+    }
 
+    dirent* entries = (dirent*)mem.ptr;
 
-    // // Make syscall to fetch the directory contents
-    // // You might need to adjust sys_get_dir_contents to be able to return the number of entries read
-    rw_result result = syscalls::get_dir_contents(path, (char*)entries, BUFFER_SIZE);
+    // ----- Perform Directory Read -----
 
-    con.write("\nResults retrieved");
+    rw_result result = syscalls::get_dir_contents(path, (char*)entries, BUFFER_BYTES);
 
-
-    // Improved error handling
     if (result.code != syscall_result_code::ok) {
-        if (result.code == syscall_result_code::not_found) {
-            con.writef("ls: directory not found: %s\n", path);
-        } else if (result.code == syscall_result_code::not_supported) {
-            con.writef("ls: not a directory: %s\n", path);
-        } else {
-            con.writef("ls: error reading directory: %s\n", path);
+        switch (result.code) {
+            case syscall_result_code::not_found:
+                con.writef("ls: directory not found: %s\n", path);
+                break;
+
+            case syscall_result_code::not_supported:
+                con.writef("ls: not a directory: %s\n", path);
+                break;
+
+            default:
+                con.writef("ls: error reading directory: %s\n", path);
+                break;
         }
         return 1;
     }
 
-    // No entries
-    if (result.length == 0) {
+    // ----- Handle Zero Entries -----
+
+    size_t count = result.length / sizeof(dirent);
+
+    if (count == 0) {
         con.write("(empty directory)\n");
         return 0;
     }
 
-    // Sort entries before displaying
-    sort_entries(entries, result.length);
+    // ----- Sort -----
 
-    // Print directory contents
-    for (size_t i = 0; i < result.length; i++) {
+    sort_entries(entries, count);
+
+    // ----- Display Results -----
+
+    for (size_t i = 0; i < count; i++) {
         if (long_format) {
-            // Long format: show file type and size
-            if (entries[i].type == 1) {  // Directory
+            if (entries[i].type == 1) {
                 con.writef("D  %-30s/\n", entries[i].name);
-            } else {  // File
+            } else {
                 con.writef("F  %-30s %8lu bytes\n", entries[i].name, entries[i].size);
             }
         } else {
-            // Short format: just show the file/directory name
             con.writef("%s\n", entries[i].name);
         }
     }
