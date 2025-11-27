@@ -60,7 +60,7 @@ static syscall_result do_get_dir_contents(process &owner, const char *path, char
 		if (child->name() == "." || child->name() == "..") continue;
 
         // Check if the buffer is large enough to hold the entry
-		dprintf("\n[get_dir_contents] child name = '%s' \n", child->name().c_str());
+		// dprintf("\n[get_dir_contents] child name = '%s' \n", child->name().c_str());
         if (offset + sizeof(dirent) > buffer_size) {
             return syscall_result { syscall_result_code::buffer_overflow, 0 };  // Not enough space in the buffer
         }
@@ -71,6 +71,7 @@ static syscall_result do_get_dir_contents(process &owner, const char *path, char
         if (name_len >= sizeof(entry.name)) {
             name_len = sizeof(entry.name) - 1;  // Ensure truncation if name is too long
         }
+		
         memops::strncpy(entry.name, child->name().c_str(), name_len);
         entry.name[name_len] = '\0';  // Ensure null-termination
 		dprintf("[KERNEL] entry.name = '%s'\n", entry.name);

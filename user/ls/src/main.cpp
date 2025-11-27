@@ -108,19 +108,66 @@ int main(const char *cmdline)
 
     // ----- Display Results -----
 
+    // Find longest name to align columns
+    size_t max_name_len = 0;
     for (size_t i = 0; i < count; i++) {
-        if (long_format) {
-            if (entries[i].type == 1) {
-                con.writef("[D]  %s/\n", entries[i].name);
-            } else {
-                con.writef("[F]  %s %u bytes\n",
-                        entries[i].name,
-                        (unsigned)entries[i].size);
-            }
-        } else {
-            con.writef("%s\n", entries[i].name);
+        size_t len = memops::strlen(entries[i].name);
+        if (len > max_name_len) {
+            max_name_len = len;
         }
     }
+
+    // Optional: clamp to avoid very wide filenames
+    if (max_name_len > 40) {
+        max_name_len = 40;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+    const bool is_dir = (entries[i].type == 1);
+
+    // Tag
+    if (is_dir) {
+        con.write("[D] ");
+    } else {
+        con.write("[F] ");
+    }
+
+    // Name (optionally truncated if absurdly long)
+    const char* name = entries[i].name;
+    size_t name_len = memops::strlen(name);
+    if (name_len > max_name_len) {
+        name_len = max_name_len;
+    }
+
+    // Print the name itself
+    for (size_t j = 0; j < name_len; j++) {
+        char ch[2] = { name[j], 0 };
+        con.write(ch);
+    }
+
+    // If it's a directory, show a trailing '/'
+    if (is_dir) {
+        con.write("/");
+    }
+
+    // Pad spaces up to column
+    size_t printed_len = name_len + (is_dir ? 1 : 0);
+    const size_t col_width = max_name_len + 2;  // +2 spacing
+    if (printed_len < col_width) {
+        for (size_t s = printed_len; s < col_width; s++) {
+            con.write(" ");
+        }
+    }
+
+    // File size (for files only)
+    if (!is_dir) {
+        con.write(" ");
+        con.writef("%u bytes", (unsigned)entries[i].size);
+    }
+
+    con.write("\n");
+}
+
 
     return 0;
 }
