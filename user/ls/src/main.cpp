@@ -36,11 +36,11 @@ int main(const char *cmdline)
     auto& con = console::get();
 
     bool long_format = false;
-    const char* path = ".";
+    const char* path = "";
 
     // ----- Parse Arguments -----
 
-    if (!cmdline) cmdline = "";
+    if (!cmdline) cmdline = "/";
 
     while (*cmdline == ' ') cmdline++;
 
@@ -62,19 +62,18 @@ int main(const char *cmdline)
 
     // ----- Allocate Entry Buffer in HEAP -----
 
-    const size_t ENTRY_COUNT = 64;   // safe & expandable
+    const size_t ENTRY_COUNT = 64;
     const size_t BUFFER_BYTES = ENTRY_COUNT * sizeof(dirent);
 
     auto mem = syscalls::alloc_mem(BUFFER_BYTES);
     if (mem.code != syscall_result_code::ok) {
-        con.write("ls: alloc_mem failed\n");
-        return 1;
+    con.write("ls: alloc_mem failed\n");
+    return 1;
     }
 
     dirent* entries = (dirent*)mem.ptr;
 
     // ----- Perform Directory Read -----
-
     rw_result result = syscalls::get_dir_contents(path, (char*)entries, BUFFER_BYTES);
 
     if (result.code != syscall_result_code::ok) {
@@ -112,9 +111,11 @@ int main(const char *cmdline)
     for (size_t i = 0; i < count; i++) {
         if (long_format) {
             if (entries[i].type == 1) {
-                con.writef("D  %-30s/\n", entries[i].name);
+                con.writef("[D]  %s/\n", entries[i].name);
             } else {
-                con.writef("F  %-30s %8lu bytes\n", entries[i].name, entries[i].size);
+                con.writef("[F]  %s %u bytes\n",
+                        entries[i].name,
+                        (unsigned)entries[i].size);
             }
         } else {
             con.writef("%s\n", entries[i].name);

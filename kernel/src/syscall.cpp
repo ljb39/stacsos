@@ -57,7 +57,10 @@ static syscall_result do_get_dir_contents(process &owner, const char *path, char
     // Copy the directory content names to the buffer using a structured format (dirent)
     size_t offset = 0;
     for (auto child : dir_node->children()) {
+		if (child->name() == "." || child->name() == "..") continue;
+
         // Check if the buffer is large enough to hold the entry
+		dprintf("\n[get_dir_contents] child name = '%s' \n", child->name().c_str());
         if (offset + sizeof(dirent) > buffer_size) {
             return syscall_result { syscall_result_code::buffer_overflow, 0 };  // Not enough space in the buffer
         }
@@ -70,6 +73,8 @@ static syscall_result do_get_dir_contents(process &owner, const char *path, char
         }
         memops::strncpy(entry.name, child->name().c_str(), name_len);
         entry.name[name_len] = '\0';  // Ensure null-termination
+		dprintf("[KERNEL] entry.name = '%s'\n", entry.name);
+
 
         // Set type: 1 for directory, 0 for file
         entry.type = (child->kind() == fs_node_kind::directory) ? 1 : 0;
@@ -79,9 +84,11 @@ static syscall_result do_get_dir_contents(process &owner, const char *path, char
 
         // Copy the entry into the buffer
         memops::memcpy(buffer + offset, &entry, sizeof(entry));
+		dprintf("[KERNEL] wrote dirent of %s at user addr %p\n",
+				entry.name,
+				buffer + offset);
         offset += sizeof(entry);
     }
-	dprintf("\nDirectory content made into dirents and copied to buffer");
 
     return syscall_result { syscall_result_code::ok, offset };  // Return the number of bytes copied
 }
