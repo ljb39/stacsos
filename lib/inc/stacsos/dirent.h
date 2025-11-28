@@ -8,8 +8,11 @@
 
 #pragma once
 
-#define MAX_FILENAME_LEN 256   // or 128, 64 — see below
+#define MAX_FILENAME_LEN 256
 
+/**
+ * Represents a single directory entry.
+ */
 struct dirent {
     char name[MAX_FILENAME_LEN];
     u8 type;     // 0=file, 1=dir

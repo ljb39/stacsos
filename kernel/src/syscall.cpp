@@ -31,19 +31,22 @@ using namespace stacsos::kernel::fs;
 using namespace stacsos::kernel::mem;
 using namespace stacsos::kernel::arch::x86;
 
-
-static syscall_result do_get_dir_contents(
-    process &owner,
-    const char *path,
-    char *buffer,
-    size_t buffer_size)
+/**
+ * Rettrieves directory entries from a filesystem path.
+ * 
+ * @param path			Path string
+ * @param buffer		Userspace memory pointer where the kernel will write an 
+ * 						array of `dirent` structures
+ * @param buffer_size	Size of the output buffer (bytes)
+ */
+static syscall_result do_get_dir_contents(const char *path,char *buffer,size_t buffer_size)
 {
-    // Basic validation
+    //ensure pointers are valid and buffer is large enough to hold one entry.
     if (!path || !buffer || buffer_size < sizeof(dirent)) {
         return { syscall_result_code::invalid_argument, 0 };
     }
 
-    // Validate path string length
+    //validate path string length. Cannot exceed 256 chars (including \0)
     const size_t MAX_PATH = 256;
     size_t n = 0;
     while (n < MAX_PATH && path[n] != '\0') n++;
@@ -52,33 +55,40 @@ static syscall_result do_get_dir_contents(
     }
 
     // Resolve directory
-    auto *node = (fat_node*) vfs::get().lookup(path);
-    if (!node) return { syscall_result_code::not_found, 0 };
-    if (node->kind() != fs_node_kind::directory)
-        return { syscall_result_code::not_supported, 0 };
 
+	//lookup fat_node
+    auto *node = (fat_node*) vfs::get().lookup(path);
+
+	//path not found
+    if (!node) return { syscall_result_code::not_found, 0 };
+
+	//path exists, but is not a directory
+    if (node->kind() != fs_node_kind::directory) return { syscall_result_code::not_supported, 0 };
+
+	//load directory content
     node->load_directory();
 
+	//num bytes written into the user buffer
     size_t offset = 0;
 
     for (auto child : node->children()) {
 
-        if (child->name() == "." || child->name() == "..")
-            continue;
+        if (child->name() == "." || child->name() == "..") continue;
 
-        if (offset + sizeof(dirent) > buffer_size)
-            return { syscall_result_code::buffer_overflow, offset };
+		//ensure there is enough space for one more dirent 
+        if (offset + sizeof(dirent) > buffer_size) return { syscall_result_code::buffer_overflow, offset };
 
         dirent e {};
+
+		//copy file name, type and size into dirent
         size_t len = child->name().length();
         if (len >= MAX_FILENAME_LEN) len = MAX_FILENAME_LEN - 1;
-
         memops::memcpy(e.name, child->name().c_str(), len);
         e.name[len] = '\0';
-
         e.type = child->kind() == fs_node_kind::directory ? 1 : 0;
         e.size = e.type ? 0 : child->size();
 
+		//copy struct into buffer and update offset
         memops::memcpy(buffer + offset, &e, sizeof(e));
         offset += sizeof(e);
     }
@@ -249,7 +259,7 @@ extern "C" syscall_result handle_syscall(syscall_numbers index, u64 arg0, u64 ar
 		char* buffer = (char*)arg1;            // Buffer to store the directory contents
 		size_t buffer_size = (size_t)arg2;     // Size of the buffer (arg2)
 
-		return do_get_dir_contents(current_process, path, buffer, buffer_size);
+		return do_get_dir_contents(path, buffer, buffer_size);
     }
 
 	default:

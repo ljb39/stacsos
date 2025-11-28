@@ -11,28 +11,38 @@
 
 using namespace stacsos;
 
+/**
+ * Options parsed from command line.
+ */
 struct ls_options {
     bool long_format = false;
     bool recursive = false;
     const char* path = "/";
 };
 
+/**
+ * Contains the results for reading the given directory.
+ * Handles both normal results and errors.
+ */
 struct readdir_result {
-    size_t count = 0;
-    syscall_result_code code;
-    const char* error_msg = "";
+    size_t count = 0; // Default value
+    syscall_result_code code; //Result code of the system call
+    const char* error_msg = ""; //Remains empty for normal results
 };
 
 /**
- * Parses command-line flags and a path from a raw command-line string.
- * Does not support conjoined flags e.g. -lr 
+ * Parse ls command-line flags and extract a directory path.
+ *
+ * Supports:
+ *      -l    long listing format
+ *      -r    recursive listing
+ *
+ * Notes:
+ *      - Flags must not be combined (i.e., "-lr" not supported).
+ *      - The first non-flag argument is taken as the path.
  * 
- * Supported options: 
- *      -l long listing format
- *      -r recursive directory listing
- * 
- * @param cmdline   Raw command-line string after the command name
- * @param opts      Structure holding all the detected options
+ * @param cmdline   Raw argument string passed by the shell
+ * @param opts      Struct to populate with parsed options
  */
 static void parse_arguments(const char* cmdline, ls_options& opts)
 {
@@ -44,6 +54,8 @@ static void parse_arguments(const char* cmdline, ls_options& opts)
     //parse flags beginning with '-'
     while (*cmdline == '-') {
         cmdline++;
+
+        //consume flag chars until space or end of line
         while (*cmdline && *cmdline != ' ') {
             switch (*cmdline) {
                 case 'l': opts.long_format = true; break;
@@ -59,40 +71,20 @@ static void parse_arguments(const char* cmdline, ls_options& opts)
         while (*cmdline == ' ') cmdline++;
     }
 
-    //if the next arg is not a flag, it is assumed to be the flag
+    //if any non-flag argument remains, use it as the path
     if (*cmdline != '\0')
         opts.path = cmdline;
 }
 
 /**
- * 
+ * Calls the get_dir_contents syscall and converts its result into a
+ * user-friendly structure.
+ *
+ * @param path         Directory path to read
+ * @param entries      Caller-allocated buffer of dirent objects
+ * @param max_entries  Maximum number of entries buffer can hold
+ * @return             readdir_result containing count or an error
  */
-static void build_path(char* out, const char* parent, const char* child, size_t max_len)
-{
-    size_t plen = memops::strlen(parent);
-    size_t clen = memops::strlen(child);
-
-    // Copy parent safely
-    if (plen >= max_len - 1) plen = max_len - 1;
-    memops::memcpy(out, parent, plen);
-    out[plen] = '\0';
-
-    size_t pos = plen;
-
-    // Add slash if needed
-    if (pos < max_len - 1 && parent[plen - 1] != '/') {
-        out[pos++] = '/';
-    }
-
-    // Append child
-    size_t space = max_len - pos - 1;
-    if (clen > space) clen = space;
-
-    memops::memcpy(out + pos, child, clen);
-    out[pos + clen] = '\0';
-}
-
-
 static readdir_result read_directory(const char* path, dirent* entries, size_t max_entries)
 {
     auto& con = console::get();
@@ -116,6 +108,7 @@ static readdir_result read_directory(const char* path, dirent* entries, size_t m
             result.error_msg = "\nls: not a directory";
             break;
         default: 
+            //successful read
             result.count = r.length / sizeof(dirent);
             break;
     }
@@ -123,6 +116,12 @@ static readdir_result read_directory(const char* path, dirent* entries, size_t m
     return result;
 }
 
+/**
+ * Sorts direcotry entries alphabetically by name (ascending)
+ * 
+ * @param entries   List of entries
+ * @param count     Number of entries
+ */
 static void sort_entries(dirent* entries, size_t count)
 {
     for (size_t i = 0; i < count; i++) {
@@ -137,17 +136,35 @@ static void sort_entries(dirent* entries, size_t count)
     }
 }
 
+/**
+ * Prints directory entries in the default short format.
+ * 
+ * @param entries   List of entries
+ * @param count     Number of entries
+ */
 static void print_short(dirent* entries, size_t count)
 {
     auto& con = console::get();
     for (size_t i = 0; i < count; i++) {
-        if (entries[i].type == 1)
-            con.writef("%s/\n", entries[i].name);
-        else
-            con.writef("%s\n", entries[i].name);
+        //Directory
+        if (entries[i].type == 1) con.writef("%s/", entries[i].name);
+        //File
+        else con.writef("%s", entries[i].name);
+
+        con.write("\n");
     }
 }
 
+/**
+ * Prints directory entries in the default short format.
+ * 
+ * Example:
+ *     [D] folder/
+ *     [F] file.txt  123 bytes
+ * 
+ * @param entries   List of entries
+ * @param count     Number of entries
+ */
 static void print_long(dirent* entries, size_t count)
 {
     auto& con = console::get();
@@ -157,44 +174,88 @@ static void print_long(dirent* entries, size_t count)
 
         con.write(is_dir ? "[D] " : "[F] ");
 
-        size_t name_len = memops::strlen(entries[i].name);
-
-        for (size_t j = 0; j < name_len; j++) {
-            char buf[2] = { entries[i].name[j], 0 };
-            con.write(buf);
-        }
+        con.writef("  %s", entries[i].name);
 
         if (is_dir) con.write("/");
-
-        if (!is_dir)
-            con.writef("%u bytes", (unsigned)entries[i].size);
+        else con.writef("  %u bytes", (unsigned)entries[i].size);
 
         con.write("\n");
     }
 }
 
+/**
+ * Builds a new filesystem path from parent + child. 
+ * Used during recursive traveral. 
+ * 
+ * @param out       Output buffer where the final path is stored
+ * @param parent    Existing directory path
+ * @param child     Name of the subdirectory/file inside parent
+ * @param max_len   Total size of output buffer. Prevents overflow in case
+ *                  parent or child name is too long.
+ */
+static void build_path(char* out, const char* parent, const char* child, size_t max_len)
+{
+    //get lengths for parent and child
+    size_t plen = memops::strlen(parent);
+    size_t clen = memops::strlen(child);
+
+    //truncate if it is too long
+    if (plen >= max_len - 1) plen = max_len - 1;
+    //copy parent into buffer
+    memops::memcpy(out, parent, plen);
+    out[plen] = '\0'; 
+
+    //current position in the buffer after writing the parent
+    size_t pos = plen;
+
+    //add slash if needed
+    if (pos < max_len - 1 && parent[plen - 1] != '/') {
+        out[pos++] = '/';
+    }
+
+    //append child
+    size_t space = max_len - pos - 1; //space remaining in the buffer
+    if (clen > space) clen = space; //truncate if necessary
+
+    //copy into buffer
+    memops::memcpy(out + pos, child, clen);
+    out[pos + clen] = '\0';
+}
+
+/**
+ * Recursively lists a directory and all its children. 
+ * 
+ * @param path  Starting directory
+ * @param opts  Command-line flags
+ */
 static void ls_recursive(const char* path, const ls_options& opts)
 {
+    //print section header for the directory
     console::get().writef("\n%s:\n", path);
 
-    const size_t BUFSZ = 64 * sizeof(dirent);
+    //allocate buffer for directory entries
+    const size_t MAX = 64;
+    const size_t BUFSZ = MAX * sizeof(dirent);
     auto mem = syscalls::alloc_mem(BUFSZ);
     dirent* entries = (dirent*)mem.ptr;
 
-    rw_result result = syscalls::get_dir_contents(path, (char*)entries, BUFSZ);
-    size_t count = result.length / sizeof(dirent);
+    readdir_result r = read_directory(path, entries, MAX);
 
-    sort_entries(entries, count);
+    //sort directory alphabetically before printing
+    sort_entries(entries, r.count);
 
-    if (opts.long_format) print_long(entries, count);
-    else print_short(entries, count);
+    if (opts.long_format) print_long(entries, r.count);
+    else print_short(entries, r.count);
 
     // Recurse into subdirectories
-    for (size_t i = 0; i < count; i++) {
-        if (entries[i].type == 1) {  // directory
+    for (size_t i = 0; i < r.count; i++) {
+        if (entries[i].type == 1) {
+            /**
+             * if it is a directory, construct a new path that appends child to
+             * current path
+             */
             char newpath[128];
             build_path(newpath, path, entries[i].name, 128);
-
             ls_recursive(newpath, opts);
         }
     }
@@ -202,7 +263,6 @@ static void ls_recursive(const char* path, const ls_options& opts)
 
 int main(const char* cmdline)
 {
-    console::get().write("\e\x0e");
     auto& con = console::get();
 
     ls_options opts;
@@ -214,12 +274,13 @@ int main(const char* cmdline)
         return 0;
     }
 
+    //allocate buffer for up to 64 directory entries
     const size_t MAX = 64;
     const size_t BUF = MAX * sizeof(dirent);
 
     auto mem = syscalls::alloc_mem(BUF);
     if (mem.code != syscall_result_code::ok) {
-        con.write("ls: alloc_mem failed\n");
+        con.write("ls: alloc_mcem failed\n");
         return 1;
     }
 
@@ -236,6 +297,7 @@ int main(const char* cmdline)
 
     if (opts.long_format) print_long(entries, result.count);
     else print_short(entries, result.count);
+    
 
     return 0;
 }
