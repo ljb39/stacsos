@@ -107,12 +107,33 @@ static void parse_arguments(const char* cmdline, LsOptions& opts)
 
 static size_t read_directory(const char* path, dirent* entries, size_t max_entries)
 {
+    auto& con = console::get();
+
     rw_result r = syscalls::get_dir_contents(path, (char*)entries,
                                              max_entries * sizeof(dirent));
-    if (r.code != syscall_result_code::ok)
-        return 0;
+    
+    switch(r.code){
 
-    return r.length / sizeof(dirent);
+        case syscall_result_code::invalid_argument:
+            con.write("ls: invalid path.");
+            return 0;
+
+        case syscall_result_code::not_found:
+            con.write("ls : path does not exist.");
+            return 0;
+
+        case syscall_result_code::not_supported:
+            con.write("ls: not a directory");
+            return 0;
+
+        default: 
+            size_t num_entries = r.length / sizeof(dirent);
+            
+            if (num_entries == 0){
+                con.write("empty directory");
+                return 0;
+            } else return num_entries;
+    }
 }
 
 static void build_path(char* out, const char* parent, const char* child, size_t max_len)
@@ -199,10 +220,8 @@ int main(const char* cmdline)
     dirent* entries = (dirent*)mem.ptr;
 
     size_t count = read_directory(opts.path, entries, MAX);
-    if (count == 0) {
-        con.write("(empty directory)\n");
-        return 0;
-    }
+    
+    if (count == 0) return 0;
 
     sort_entries(entries, count);
 

@@ -111,7 +111,7 @@ static syscall_result operation_result_to_syscall_result(operation_result &&o)
 
 extern "C" syscall_result handle_syscall(syscall_numbers index, u64 arg0, u64 arg1, u64 arg2, u64 arg3)
 {
-	// dprintf("\nHandle syscall entered: %llu \n", static_cast<u64>(index));
+	dprintf("\nHandle syscall entered: %llu \n", static_cast<u64>(index));
 	
 	auto &current_thread = thread::current();
 
