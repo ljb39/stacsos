@@ -23,18 +23,31 @@ struct readdir_result {
     const char* error_msg = "";
 };
 
+/**
+ * Parses command-line flags and a path from a raw command-line string.
+ * Does not support conjoined flags e.g. -lr 
+ * 
+ * Supported options: 
+ *      -l long listing format
+ *      -r recursive directory listing
+ * 
+ * @param cmdline   Raw command-line string after the command name
+ * @param opts      Structure holding all the detected options
+ */
 static void parse_arguments(const char* cmdline, ls_options& opts)
 {
     if (!cmdline) cmdline = "";
+
+    //skips leading spaces
     while (*cmdline == ' ') cmdline++;
 
+    //parse flags beginning with '-'
     while (*cmdline == '-') {
         cmdline++;
         while (*cmdline && *cmdline != ' ') {
             switch (*cmdline) {
                 case 'l': opts.long_format = true; break;
                 case 'r': opts.recursive   = true; break;
-
                 default:
                     console::get().writef("ls: unknown option '%c'\n", *cmdline);
                     break;
@@ -42,13 +55,18 @@ static void parse_arguments(const char* cmdline, ls_options& opts)
             cmdline++;
         }
 
+        //skip spaces until the next arg is detected  
         while (*cmdline == ' ') cmdline++;
     }
 
+    //if the next arg is not a flag, it is assumed to be the flag
     if (*cmdline != '\0')
         opts.path = cmdline;
 }
 
+/**
+ * 
+ */
 static void build_path(char* out, const char* parent, const char* child, size_t max_len)
 {
     size_t plen = memops::strlen(parent);
@@ -134,22 +152,12 @@ static void print_long(dirent* entries, size_t count)
 {
     auto& con = console::get();
 
-    size_t max_name = 0;
-
-    for (size_t i = 0; i < count; i++) {
-        size_t len = memops::strlen(entries[i].name);
-        if (len > max_name) max_name = len;
-    }
-    
-    if (max_name > 40) max_name = 40;
-
     for (size_t i = 0; i < count; i++) {
         bool is_dir = (entries[i].type == 1);
 
         con.write(is_dir ? "[D] " : "[F] ");
 
         size_t name_len = memops::strlen(entries[i].name);
-        if (name_len > max_name) name_len = max_name;
 
         for (size_t j = 0; j < name_len; j++) {
             char buf[2] = { entries[i].name[j], 0 };
@@ -157,10 +165,6 @@ static void print_long(dirent* entries, size_t count)
         }
 
         if (is_dir) con.write("/");
-
-        size_t printed = name_len + (is_dir ? 1 : 0);
-        size_t col_width = max_name + 2;
-        while (printed < col_width) { con.write(" "); printed++; }
 
         if (!is_dir)
             con.writef("%u bytes", (unsigned)entries[i].size);
