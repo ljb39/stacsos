@@ -32,66 +32,58 @@ using namespace stacsos::kernel::mem;
 using namespace stacsos::kernel::arch::x86;
 
 
-static syscall_result do_get_dir_contents(process &owner, const char *path, char *buffer, size_t buffer_size)
+static syscall_result do_get_dir_contents(
+    process &owner,
+    const char *path,
+    char *buffer,
+    size_t buffer_size)
 {
-	dprintf("\n do_get_dir_contents entered.");
-
-    fat_node* dir_node = (fat_node*)vfs::get().lookup(path);
-
-	dprintf("\n[get_dir_contents] lookup('%s') returned %p", path, dir_node);
-
-	if (!dir_node || dir_node->kind() != fs_node_kind::directory) {
-		dprintf("\ninvalid path");
-		return syscall_result { syscall_result_code::not_found, 0 };  // If path is invalid
-	}
-	if (dir_node->kind() != fs_node_kind::directory) {
-		dprintf("\npath does not lead to a directory");
-    	return syscall_result { syscall_result_code::not_supported, 0 };  // Path is not a directory
-	}
-
-
-    // Load the children of the directory
-    dir_node->load_directory();
-	dprintf("\nDirectory children loaded.");
-
-    // Copy the directory content names to the buffer using a structured format (dirent)
-    size_t offset = 0;
-    for (auto child : dir_node->children()) {
-		if (child->name() == "." || child->name() == "..") continue;
-
-        // Check if the buffer is large enough to hold the entry
-		// dprintf("\n[get_dir_contents] child name = '%s' \n", child->name().c_str());
-        if (offset + sizeof(dirent) > buffer_size) {
-            return syscall_result { syscall_result_code::buffer_overflow, 0 };  // Not enough space in the buffer
-        }
-
-        // Create a dirent structure for the child entry
-        dirent entry;
-        size_t name_len = child->name().length();
-        if (name_len >= sizeof(entry.name)) {
-            name_len = sizeof(entry.name) - 1;  // Ensure truncation if name is too long
-        }
-		
-        memops::strncpy(entry.name, child->name().c_str(), name_len);
-        entry.name[name_len] = '\0';  // Ensure null-termination
-		dprintf("[KERNEL] entry.name = '%s'\n", entry.name);
-
-
-        // Set type: 1 for directory, 0 for file
-        entry.type = (child->kind() == fs_node_kind::directory) ? 1 : 0;
-
-        // Set size for files only (directories have size 0)
-        entry.size = (entry.type == 0) ? child->size() : 0;
-
-        // Copy the entry into the buffer
-        memops::memcpy(buffer + offset, &entry, sizeof(entry));
-		dprintf("[KERNEL] wrote dirent of %s at user addr %p\n",
-				entry.name,
-				buffer + offset);
-        offset += sizeof(entry);
+    // Basic validation
+    if (!path || !buffer || buffer_size < sizeof(dirent)) {
+        return { syscall_result_code::invalid_argument, 0 };
     }
 
-    return syscall_result { syscall_result_code::ok, offset };  // Return the number of bytes copied
+    // Validate path string length
+    const size_t MAX_PATH = 256;
+    size_t n = 0;
+    while (n < MAX_PATH && path[n] != '\0') n++;
+    if (n == MAX_PATH) {
+        return { syscall_result_code::invalid_argument, 0 };
+    }
+
+    // Resolve directory
+    auto *node = (fat_node*) vfs::get().lookup(path);
+    if (!node) return { syscall_result_code::not_found, 0 };
+    if (node->kind() != fs_node_kind::directory)
+        return { syscall_result_code::not_supported, 0 };
+
+    node->load_directory();
+
+    size_t offset = 0;
+
+    for (auto child : node->children()) {
+
+        if (child->name() == "." || child->name() == "..")
+            continue;
+
+        if (offset + sizeof(dirent) > buffer_size)
+            return { syscall_result_code::buffer_overflow, offset };
+
+        dirent e {};
+        size_t len = child->name().length();
+        if (len >= MAX_FILENAME_LEN) len = MAX_FILENAME_LEN - 1;
+
+        memops::memcpy(e.name, child->name().c_str(), len);
+        e.name[len] = '\0';
+
+        e.type = child->kind() == fs_node_kind::directory ? 1 : 0;
+        e.size = e.type ? 0 : child->size();
+
+        memops::memcpy(buffer + offset, &e, sizeof(e));
+        offset += sizeof(e);
+    }
+
+    return { syscall_result_code::ok, offset };
 }
 
 

@@ -8,8 +8,10 @@
 
 #pragma once
 
+#define MAX_FILENAME_LEN 256   // or 128, 64 — see below
+
 struct dirent {
-    char name[256];  // File or directory name (adjust length as needed)
-    u8 type;    // File type: 0 = file, 1 = directory
-    u64 size;   // Size for files (0 for directories)
+    char name[MAX_FILENAME_LEN];
+    u8 type;     // 0=file, 1=dir
+    u64 size;    // file size (0 for dir)
 };

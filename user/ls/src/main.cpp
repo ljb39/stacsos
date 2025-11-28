@@ -11,6 +11,12 @@
 
 using namespace stacsos;
 
+struct LsOptions {
+    bool long_format = false;
+    bool recursive = false;
+    const char* path = "/";
+};
+
 static void sort_entries(dirent* entries, size_t count)
 {
     for (size_t i = 0; i < count; i++) {
@@ -73,50 +79,126 @@ static void print_long(dirent* entries, size_t count)
     }
 }
 
-static const char* parse_args(const char* cmdline, bool& long_format)
+static void parse_arguments(const char* cmdline, LsOptions& opts)
 {
-    if (!cmdline) return "/";
-
+    if (!cmdline) cmdline = "";
     while (*cmdline == ' ') cmdline++;
 
-    if (*cmdline == '-') {
+    while (*cmdline == '-') {
         cmdline++;
-        if (*cmdline == 'l') {
-            long_format = true;
+        while (*cmdline && *cmdline != ' ') {
+            switch (*cmdline) {
+                case 'l': opts.long_format = true; break;
+                case 'r': opts.recursive   = true; break;
+
+                default:
+                    console::get().writef("ls: unknown option '%c'\n", *cmdline);
+                    break;
+            }
             cmdline++;
         }
+
         while (*cmdline == ' ') cmdline++;
     }
 
-    return (*cmdline == '\0') ? "/" : cmdline;
+    if (*cmdline != '\0')
+        opts.path = cmdline;
 }
+
+static size_t read_directory(const char* path, dirent* entries, size_t max_entries)
+{
+    rw_result r = syscalls::get_dir_contents(path, (char*)entries,
+                                             max_entries * sizeof(dirent));
+    if (r.code != syscall_result_code::ok)
+        return 0;
+
+    return r.length / sizeof(dirent);
+}
+
+static void build_path(char* out, const char* parent, const char* child, size_t max_len)
+{
+    size_t plen = memops::strlen(parent);
+    size_t clen = memops::strlen(child);
+
+    // Copy parent safely
+    if (plen >= max_len - 1) plen = max_len - 1;
+    memops::memcpy(out, parent, plen);
+    out[plen] = '\0';
+
+    size_t pos = plen;
+
+    // Add slash if needed
+    if (pos < max_len - 1 && parent[plen - 1] != '/') {
+        out[pos++] = '/';
+    }
+
+    // Append child
+    size_t space = max_len - pos - 1;
+    if (clen > space) clen = space;
+
+    memops::memcpy(out + pos, child, clen);
+    out[pos + clen] = '\0';
+}
+
+
+
+static void ls_recursive(const char* path, const LsOptions& opts)
+{
+    console::get().writef("\n%s:\n", path);
+
+    const size_t BUFSZ = 64 * sizeof(dirent);
+    auto mem = syscalls::alloc_mem(BUFSZ);
+    dirent* entries = (dirent*)mem.ptr;
+
+    rw_result result = syscalls::get_dir_contents(path, (char*)entries, BUFSZ);
+    size_t count = result.length / sizeof(dirent);
+
+    sort_entries(entries, count);
+
+    if (opts.long_format)
+        print_long(entries, count);
+    else
+        print_short(entries, count);
+
+    // Recurse into subdirectories
+    for (size_t i = 0; i < count; i++) {
+        if (entries[i].type == 1) {  // directory
+            char newpath[128];
+            build_path(newpath, path, entries[i].name, 128);
+
+            ls_recursive(newpath, opts);
+        }
+    }
+}
+
+
+
 
 int main(const char* cmdline)
 {
+    console::get().write("\e\x0e");
     auto& con = console::get();
-    con.write("\e\x0e");
 
-    bool long_format = false;
-    const char* path = parse_args(cmdline, long_format);
+    LsOptions opts;
+    parse_arguments(cmdline, opts);
 
-    const size_t ENTRY_COUNT = 64;
-    const size_t BUFFER_SIZE = ENTRY_COUNT * sizeof(dirent);
+    if (opts.recursive) {
+        ls_recursive(opts.path, opts);
+        return 0;
+    }
 
-    auto mem = syscalls::alloc_mem(BUFFER_SIZE);
+    const size_t MAX = 64;
+    const size_t BUF = MAX * sizeof(dirent);
+
+    auto mem = syscalls::alloc_mem(BUF);
     if (mem.code != syscall_result_code::ok) {
         con.write("ls: alloc_mem failed\n");
         return 1;
     }
 
     dirent* entries = (dirent*)mem.ptr;
-    rw_result r = syscalls::get_dir_contents(path, (char*)entries, BUFFER_SIZE);
 
-    if (r.code != syscall_result_code::ok) {
-        con.writef("ls: cannot read: %s\n", path);
-        return 1;
-    }
-
-    size_t count = r.length / sizeof(dirent);
+    size_t count = read_directory(opts.path, entries, MAX);
     if (count == 0) {
         con.write("(empty directory)\n");
         return 0;
@@ -124,10 +206,12 @@ int main(const char* cmdline)
 
     sort_entries(entries, count);
 
-    if (long_format)
+    if (opts.long_format)
         print_long(entries, count);
     else
         print_short(entries, count);
 
     return 0;
 }
+
+
