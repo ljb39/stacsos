@@ -11,11 +11,99 @@
 
 using namespace stacsos;
 
-struct LsOptions {
+struct ls_options {
     bool long_format = false;
     bool recursive = false;
     const char* path = "/";
 };
+
+struct readdir_result {
+    size_t count = 0;
+    syscall_result_code code;
+    const char* error_msg = "";
+};
+
+static void parse_arguments(const char* cmdline, ls_options& opts)
+{
+    if (!cmdline) cmdline = "";
+    while (*cmdline == ' ') cmdline++;
+
+    while (*cmdline == '-') {
+        cmdline++;
+        while (*cmdline && *cmdline != ' ') {
+            switch (*cmdline) {
+                case 'l': opts.long_format = true; break;
+                case 'r': opts.recursive   = true; break;
+
+                default:
+                    console::get().writef("ls: unknown option '%c'\n", *cmdline);
+                    break;
+            }
+            cmdline++;
+        }
+
+        while (*cmdline == ' ') cmdline++;
+    }
+
+    if (*cmdline != '\0')
+        opts.path = cmdline;
+}
+
+static void build_path(char* out, const char* parent, const char* child, size_t max_len)
+{
+    size_t plen = memops::strlen(parent);
+    size_t clen = memops::strlen(child);
+
+    // Copy parent safely
+    if (plen >= max_len - 1) plen = max_len - 1;
+    memops::memcpy(out, parent, plen);
+    out[plen] = '\0';
+
+    size_t pos = plen;
+
+    // Add slash if needed
+    if (pos < max_len - 1 && parent[plen - 1] != '/') {
+        out[pos++] = '/';
+    }
+
+    // Append child
+    size_t space = max_len - pos - 1;
+    if (clen > space) clen = space;
+
+    memops::memcpy(out + pos, child, clen);
+    out[pos + clen] = '\0';
+}
+
+
+static readdir_result read_directory(const char* path, dirent* entries, size_t max_entries)
+{
+    auto& con = console::get();
+
+    readdir_result result; 
+
+    rw_result r = syscalls::get_dir_contents(path, (char*)entries,
+                                             max_entries * sizeof(dirent));
+    
+    result.code = r.code;                                       
+
+    switch(r.code){
+
+        case syscall_result_code::invalid_argument:
+            result.error_msg = "\nls: invalid path.";
+            break;
+        case syscall_result_code::not_found:
+            result.error_msg = "\nls : path does not exist.";
+            break;
+        case syscall_result_code::not_supported:
+            result.error_msg = "\nls: not a directory";
+            break;
+        default: 
+            result.count = r.length / sizeof(dirent);
+            break;
+    }
+
+    return result;
+}
 
 static void sort_entries(dirent* entries, size_t count)
 {
@@ -47,10 +135,12 @@ static void print_long(dirent* entries, size_t count)
     auto& con = console::get();
 
     size_t max_name = 0;
+
     for (size_t i = 0; i < count; i++) {
         size_t len = memops::strlen(entries[i].name);
         if (len > max_name) max_name = len;
     }
+    
     if (max_name > 40) max_name = 40;
 
     for (size_t i = 0; i < count; i++) {
@@ -79,91 +169,7 @@ static void print_long(dirent* entries, size_t count)
     }
 }
 
-static void parse_arguments(const char* cmdline, LsOptions& opts)
-{
-    if (!cmdline) cmdline = "";
-    while (*cmdline == ' ') cmdline++;
-
-    while (*cmdline == '-') {
-        cmdline++;
-        while (*cmdline && *cmdline != ' ') {
-            switch (*cmdline) {
-                case 'l': opts.long_format = true; break;
-                case 'r': opts.recursive   = true; break;
-
-                default:
-                    console::get().writef("ls: unknown option '%c'\n", *cmdline);
-                    break;
-            }
-            cmdline++;
-        }
-
-        while (*cmdline == ' ') cmdline++;
-    }
-
-    if (*cmdline != '\0')
-        opts.path = cmdline;
-}
-
-static size_t read_directory(const char* path, dirent* entries, size_t max_entries)
-{
-    auto& con = console::get();
-
-    rw_result r = syscalls::get_dir_contents(path, (char*)entries,
-                                             max_entries * sizeof(dirent));
-    
-    switch(r.code){
-
-        case syscall_result_code::invalid_argument:
-            con.write("ls: invalid path.");
-            return 0;
-
-        case syscall_result_code::not_found:
-            con.write("ls : path does not exist.");
-            return 0;
-
-        case syscall_result_code::not_supported:
-            con.write("ls: not a directory");
-            return 0;
-
-        default: 
-            size_t num_entries = r.length / sizeof(dirent);
-            
-            if (num_entries == 0){
-                con.write("empty directory");
-                return 0;
-            } else return num_entries;
-    }
-}
-
-static void build_path(char* out, const char* parent, const char* child, size_t max_len)
-{
-    size_t plen = memops::strlen(parent);
-    size_t clen = memops::strlen(child);
-
-    // Copy parent safely
-    if (plen >= max_len - 1) plen = max_len - 1;
-    memops::memcpy(out, parent, plen);
-    out[plen] = '\0';
-
-    size_t pos = plen;
-
-    // Add slash if needed
-    if (pos < max_len - 1 && parent[plen - 1] != '/') {
-        out[pos++] = '/';
-    }
-
-    // Append child
-    size_t space = max_len - pos - 1;
-    if (clen > space) clen = space;
-
-    memops::memcpy(out + pos, child, clen);
-    out[pos + clen] = '\0';
-}
-
-
-
-static void ls_recursive(const char* path, const LsOptions& opts)
+static void ls_recursive(const char* path, const ls_options& opts)
 {
     console::get().writef("\n%s:\n", path);
 
@@ -176,10 +182,8 @@ static void ls_recursive(const char* path, const LsOptions& opts)
 
     sort_entries(entries, count);
 
-    if (opts.long_format)
-        print_long(entries, count);
-    else
-        print_short(entries, count);
+    if (opts.long_format) print_long(entries, count);
+    else print_short(entries, count);
 
     // Recurse into subdirectories
     for (size_t i = 0; i < count; i++) {
@@ -192,15 +196,12 @@ static void ls_recursive(const char* path, const LsOptions& opts)
     }
 }
 
-
-
-
 int main(const char* cmdline)
 {
     console::get().write("\e\x0e");
     auto& con = console::get();
 
-    LsOptions opts;
+    ls_options opts;
 
     parse_arguments(cmdline, opts);
 
@@ -215,23 +216,23 @@ int main(const char* cmdline)
     auto mem = syscalls::alloc_mem(BUF);
     if (mem.code != syscall_result_code::ok) {
         con.write("ls: alloc_mem failed\n");
-        return 0;
+        return 1;
     }
 
     dirent* entries = (dirent*)mem.ptr;
 
-    size_t count = read_directory(opts.path, entries, MAX);
+    readdir_result result = read_directory(opts.path, entries, MAX);
     
-    if (count == 0) return 0;
+    if (result.code != syscall_result_code::ok) {
+        con.write(result.error_msg);
+        return 1;
+    }
 
-    sort_entries(entries, count);
+    sort_entries(entries, result.count);
 
-    if (opts.long_format)
-        print_long(entries, count);
-    else
-        print_short(entries, count);
+    if (opts.long_format) print_long(entries, result.count);
+    else print_short(entries, result.count);
 
-    con.write("\n end of program reached");
     return 0;
 }
 
