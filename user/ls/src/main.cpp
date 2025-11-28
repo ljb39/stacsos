@@ -201,6 +201,7 @@ int main(const char* cmdline)
     auto& con = console::get();
 
     LsOptions opts;
+
     parse_arguments(cmdline, opts);
 
     if (opts.recursive) {
@@ -214,7 +215,7 @@ int main(const char* cmdline)
     auto mem = syscalls::alloc_mem(BUF);
     if (mem.code != syscall_result_code::ok) {
         con.write("ls: alloc_mem failed\n");
-        return 1;
+        return 0;
     }
 
     dirent* entries = (dirent*)mem.ptr;
@@ -230,6 +231,7 @@ int main(const char* cmdline)
     else
         print_short(entries, count);
 
+    con.write("\n end of program reached");
     return 0;
 }
 

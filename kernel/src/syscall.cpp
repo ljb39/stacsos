@@ -201,7 +201,7 @@ extern "C" syscall_result handle_syscall(syscall_numbers index, u64 arg0, u64 ar
 	}
 
 	case syscall_numbers::wait_for_process: {
-		// dprintf("wait process: %lu\n", arg0);
+		dprintf("wait process: %lu\n", arg0);
 
 		auto process_object = object_manager::get().get_object(current_process, arg0);
 		if (!process_object) {
