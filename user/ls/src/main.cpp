@@ -99,13 +99,13 @@ static readdir_result read_directory(const char* path, dirent* entries, size_t m
     switch(r.code){
 
         case syscall_result_code::invalid_argument:
-            result.error_msg = "\nls: invalid path.";
+            result.error_msg = "\nls: invalid path.\n";
             break;
         case syscall_result_code::not_found:
-            result.error_msg = "\nls : path does not exist.";
+            result.error_msg = "\nls : path does not exist.\n";
             break;
         case syscall_result_code::not_supported:
-            result.error_msg = "\nls: not a directory";
+            result.error_msg = "\nls: not a directory. \n";
             break;
         default: 
             //successful read
@@ -147,11 +147,9 @@ static void print_short(dirent* entries, size_t count)
     auto& con = console::get();
     for (size_t i = 0; i < count; i++) {
         //Directory
-        if (entries[i].type == 1) con.writef("%s/", entries[i].name);
+        if (entries[i].type == 1) con.writef("%s/\n", entries[i].name);
         //File
-        else con.writef("%s", entries[i].name);
-
-        con.write("\n");
+        else con.writef("%s\n", entries[i].name);
     }
 }
 
@@ -172,14 +170,12 @@ static void print_long(dirent* entries, size_t count)
     for (size_t i = 0; i < count; i++) {
         bool is_dir = (entries[i].type == 1);
 
-        con.write(is_dir ? "[D] " : "[F] ");
+        const char* type = is_dir ? "[D] " : "[F] ";
 
-        con.writef("  %s", entries[i].name);
-
-        if (is_dir) con.write("/");
-        else con.writef("  %u bytes", (unsigned)entries[i].size);
-
-        con.write("\n");
+        con.writef("%s  %s%s %u bytes\n", type, 
+                                        entries[i].name, 
+                                        is_dir ? "/" : "", 
+                                        (unsigned)entries[i].size);
     }
 }
 
@@ -228,15 +224,23 @@ static void build_path(char* out, const char* parent, const char* child, size_t 
  * @param path  Starting directory
  * @param opts  Command-line flags
  */
-static void ls_recursive(const char* path, const ls_options& opts)
+static void ls_recursive(const char* 
+    path, const ls_options& opts)
 {
+    auto& con = console::get();
+
     //print section header for the directory
     console::get().writef("\n%s:\n", path);
 
-    //allocate buffer for directory entries
     const size_t MAX = 64;
-    const size_t BUFSZ = MAX * sizeof(dirent);
-    auto mem = syscalls::alloc_mem(BUFSZ);
+    const size_t BUF = MAX * sizeof(dirent);
+
+    auto mem = syscalls::alloc_mem(BUF);
+    if (mem.code != syscall_result_code::ok) {
+        con.write("ls: alloc_mcem failed\n");
+        return;
+    }
+
     dirent* entries = (dirent*)mem.ptr;
 
     readdir_result r = read_directory(path, entries, MAX);
@@ -271,33 +275,30 @@ int main(const char* cmdline)
 
     if (opts.recursive) {
         ls_recursive(opts.path, opts);
-        return 0;
-    }
+    } else {
+        //allocate buffer for up to 64 directory entries
+        const size_t MAX = 64;
+        const size_t BUF = MAX * sizeof(dirent);
 
-    //allocate buffer for up to 64 directory entries
-    const size_t MAX = 64;
-    const size_t BUF = MAX * sizeof(dirent);
+        auto mem = syscalls::alloc_mem(BUF);
+        if (mem.code != syscall_result_code::ok) {
+            con.write("ls: alloc_mcem failed\n");
+            return 1;
+        }
 
-    auto mem = syscalls::alloc_mem(BUF);
-    if (mem.code != syscall_result_code::ok) {
-        con.write("ls: alloc_mcem failed\n");
-        return 1;
-    }
-
-    dirent* entries = (dirent*)mem.ptr;
-
-    readdir_result result = read_directory(opts.path, entries, MAX);
+        dirent* entries = (dirent*)mem.ptr;
+        readdir_result result = read_directory(opts.path, entries, MAX);
     
-    if (result.code != syscall_result_code::ok) {
-        con.write(result.error_msg);
-        return 1;
+        if (result.code != syscall_result_code::ok) {
+            con.write(result.error_msg);
+            return 1;
+        }
+
+        sort_entries(entries, result.count);
+
+        if (opts.long_format) print_long(entries, result.count);
+        else print_short(entries, result.count);
     }
-
-    sort_entries(entries, result.count);
-
-    if (opts.long_format) print_long(entries, result.count);
-    else print_short(entries, result.count);
-    
 
     return 0;
 }
