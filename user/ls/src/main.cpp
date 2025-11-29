@@ -127,6 +127,7 @@ static void sort_entries(dirent* entries, size_t count)
     for (size_t i = 0; i < count; i++) {
         for (size_t j = i + 1; j < count; j++) {
             if (memops::strcmp(entries[i].name, entries[j].name) > 0) {
+                //full struct swap
                 dirent tmp;
                 memops::memcpy(&tmp, &entries[i], sizeof(dirent));
                 memops::memcpy(&entries[i], &entries[j], sizeof(dirent));
@@ -224,26 +225,27 @@ static void build_path(char* out, const char* parent, const char* child, size_t 
  * @param path  Starting directory
  * @param opts  Command-line flags
  */
-static void ls_recursive(const char* 
-    path, const ls_options& opts)
+static int ls_recursive(const char* path, const ls_options& opts)
 {
     auto& con = console::get();
-
-    //print section header for the directory
-    console::get().writef("\n%s:\n", path);
 
     const size_t MAX = 64;
     const size_t BUF = MAX * sizeof(dirent);
 
     auto mem = syscalls::alloc_mem(BUF);
     if (mem.code != syscall_result_code::ok) {
-        con.write("ls: alloc_mcem failed\n");
-        return;
+        con.write("ls: alloc_mem failed\n");
+        return 1;
     }
 
     dirent* entries = (dirent*)mem.ptr;
 
     readdir_result r = read_directory(path, entries, MAX);
+
+    if (r.code != syscall_result_code::ok) {
+            con.write(r.error_msg);
+            return 1;
+    }
 
     //sort directory alphabetically before printing
     sort_entries(entries, r.count);
@@ -260,9 +262,13 @@ static void ls_recursive(const char*
              */
             char newpath[128];
             build_path(newpath, path, entries[i].name, 128);
+            //print section header for the directory
+            console::get().writef("\n%s:\n", path);
             ls_recursive(newpath, opts);
         }
     }
+
+    return 0;
 }
 
 int main(const char* cmdline)
@@ -274,7 +280,7 @@ int main(const char* cmdline)
     parse_arguments(cmdline, opts);
 
     if (opts.recursive) {
-        ls_recursive(opts.path, opts);
+        return ls_recursive(opts.path, opts);
     } else {
         //allocate buffer for up to 64 directory entries
         const size_t MAX = 64;
@@ -298,9 +304,10 @@ int main(const char* cmdline)
 
         if (opts.long_format) print_long(entries, result.count);
         else print_short(entries, result.count);
+
+        return 0;
     }
 
-    return 0;
 }
 
 
